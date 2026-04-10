@@ -1,4 +1,6 @@
-/* 全局样式 */
+/* ========================
+   新拟态全局样式
+   ======================== */
 * {
   margin: 0;
   padding: 0;
@@ -6,11 +8,132 @@
 }
 
 body {
-  font-family: Arial, sans-serif;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 14px;
   line-height: 1.5;
-  color: #333;
-  background-color: #f5f5f5;
+  color: #4a5568;
+  background-color: #e8ecf1;
+}
+
+/* ========================
+   新拟态核心工具类
+   ======================== */
+
+/* 浮出效果：元素从背景中凸起 */
+.neo-raised {
+  background: #e8ecf1;
+  box-shadow:
+    6px 6px 12px rgba(163, 177, 198, 0.6),
+    -6px -6px 12px rgba(255, 255, 255, 0.8);
+  border-radius: 16px;
+}
+
+/* 凹陷效果：元素压入背景 */
+.neo-inset {
+  background: #e8ecf1;
+  box-shadow:
+    inset 4px 4px 8px rgba(163, 177, 198, 0.6),
+    inset -4px -4px 8px rgba(255, 255, 255, 0.8);
+  border-radius: 12px;
+}
+
+/* 新拟态按钮：凸起，按下时凹陷 */
+.neo-btn {
+  background: #e8ecf1;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a5568;
+  cursor: pointer;
+  box-shadow:
+    4px 4px 8px rgba(163, 177, 198, 0.6),
+    -4px -4px 8px rgba(255, 255, 255, 0.8);
+  transition: all 0.15s ease;
+  outline: none;
+  user-select: none;
+}
+
+.neo-btn:hover {
+  box-shadow:
+    6px 6px 12px rgba(163, 177, 198, 0.65),
+    -6px -6px 12px rgba(255, 255, 255, 0.85);
+  color: #2d3748;
+}
+
+.neo-btn:active {
+  box-shadow:
+    inset 3px 3px 6px rgba(163, 177, 198, 0.6),
+    inset -3px -3px 6px rgba(255, 255, 255, 0.8);
+  color: #718096;
+}
+
+.neo-btn:disabled {
+  color: #a0aec0;
+  cursor: not-allowed;
+  box-shadow:
+    2px 2px 4px rgba(163, 177, 198, 0.4),
+    -2px -2px 4px rgba(255, 255, 255, 0.6);
+}
+
+/* 新拟态橙色主按钮 */
+.neo-btn-primary {
+  background: linear-gradient(145deg, #fb923c, #f97316);
+  color: white;
+  box-shadow:
+    4px 4px 8px rgba(163, 177, 198, 0.5),
+    -4px -4px 8px rgba(255, 255, 255, 0.7),
+    2px 2px 4px rgba(249, 115, 22, 0.3);
+}
+
+.neo-btn-primary:hover {
+  background: linear-gradient(145deg, #fdba74, #fb923c);
+  box-shadow:
+    6px 6px 12px rgba(163, 177, 198, 0.55),
+    -6px -6px 12px rgba(255, 255, 255, 0.8),
+    3px 3px 6px rgba(249, 115, 22, 0.35);
+  color: white;
+}
+
+.neo-btn-primary:active {
+  background: linear-gradient(145deg, #ea580c, #f97316);
+  box-shadow:
+    inset 3px 3px 6px rgba(0, 0, 0, 0.15),
+    inset -3px -3px 6px rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.neo-btn-primary:disabled {
+  background: linear-gradient(145deg, #cbd5e0, #a0aec0);
+  color: rgba(255, 255, 255, 0.6);
+  box-shadow:
+    2px 2px 4px rgba(163, 177, 198, 0.4),
+    -2px -2px 4px rgba(255, 255, 255, 0.6);
+  cursor: not-allowed;
+}
+
+/* 新拟态危险按钮（红色） */
+.neo-btn-danger {
+  color: #e53e3e;
+}
+
+.neo-btn-danger:hover {
+  color: #c53030;
+}
+
+.neo-btn-danger:active {
+  color: #9b2c2c;
+}
+
+/* 新拟态小按钮 */
+.neo-btn-sm {
+  padding: 6px 12px;
+  font-size: 11px;
+  border-radius: 10px;
+  box-shadow:
+    2px 2px 4px rgba(163, 177, 198, 0.5),
+    -2px -2px 4px rgba(255, 255, 255, 0.7);
 }
 
 /* ========================
@@ -20,55 +143,60 @@ body {
   width: 100%;
   height: 100vh;
   overflow: hidden;
-  background-color: #ffffff;
+  background-color: #e8ecf1;
+  padding: 16px;
 }
 
 .sidepanel-container {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  padding: 0;
-  background-color: #ffffff;
+  height: 100%;
+  gap: 14px;
 }
 
-/* 顶部标题栏 */
+/* 顶部标题卡片 */
 .sidepanel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 12px;
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-  color: white;
+  padding: 16px 20px;
+  background: #e8ecf1;
+  border-radius: 18px;
   flex-shrink: 0;
+  box-shadow:
+    5px 5px 10px rgba(163, 177, 198, 0.6),
+    -5px -5px 10px rgba(255, 255, 255, 0.9);
 }
 
 .header-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .header-icon {
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .sidepanel-header h1 {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
-  color: white;
+  color: #4a5568;
   margin: 0;
-  text-align: left;
 }
 
-/* 录制中红色徽标 */
+/* 录制中徽标 */
 .recording-badge {
-  background-color: #ef4444;
-  color: white;
+  background: linear-gradient(145deg, #fed7d7, #feb2b2);
+  color: #c53030;
   font-size: 11px;
   font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 12px;
-  animation: badge-pulse 1.2s infinite;
+  padding: 4px 10px;
+  border-radius: 20px;
+  box-shadow:
+    2px 2px 5px rgba(163, 177, 198, 0.4),
+    -2px -2px 5px rgba(255, 255, 255, 0.7);
+  animation: badge-pulse 1.2s ease-in-out infinite;
   letter-spacing: 0.5px;
 }
 
@@ -77,22 +205,25 @@ body {
 }
 
 @keyframes badge-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.75; transform: scale(0.97); }
 }
 
-/* 侧边栏内容区 */
+/* 控制区域 */
 .sidepanel-container .control-section {
-  padding: 14px 16px;
-  border-bottom: 1px solid #e5e7eb;
-  background-color: #f9fafb;
+  padding: 18px 20px;
+  background: #e8ecf1;
+  border-radius: 18px;
   flex-shrink: 0;
+  box-shadow:
+    5px 5px 10px rgba(163, 177, 198, 0.55),
+    -5px -5px 10px rgba(255, 255, 255, 0.85);
 }
 
 .control-buttons {
   display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 12px;
+  margin-bottom: 10px;
 }
 
 .sidepanel-container .primary-button,
@@ -101,239 +232,229 @@ body {
   margin: 0;
 }
 
+/* 状态文字 */
+.status {
+  font-size: 12px;
+  color: #a0aec0;
+  text-align: center;
+}
+
+/* 步骤列表区 */
 .sidepanel-container .steps-section {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 12px 16px;
+  gap: 10px;
   overflow: hidden;
-}
-
-.sidepanel-container .steps-container {
-  flex: 1;
-  max-height: none;
-  overflow-y: auto;
-}
-
-.sidepanel-container .export-section {
-  padding: 12px 16px;
-  border-top: 1px solid #e5e7eb;
-  background-color: #f9fafb;
-  flex-shrink: 0;
-  margin-top: 0;
-}
-
-/* 步骤计数 */
-.steps-count {
-  color: #6b7280;
-  font-weight: normal;
-  font-size: 13px;
-}
-
-/* ========================
-   弹出面板样式（保留兼容）
-   ======================== */
-.popup-container {
-  width: 350px;
-  padding: 20px;
-  background-color: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-}
-
-.popup-container h1 {
-  font-size: 18px;
-  font-weight: bold;
-  margin-bottom: 20px;
-  color: #3b82f6;
-  text-align: center;
-}
-
-.popup-container h2 {
-  font-size: 14px;
-  font-weight: bold;
-  margin-bottom: 10px;
-  color: #333;
-}
-
-
-/* 控制区域样式 */
-.control-section {
-  margin-bottom: 20px;
-  text-align: center;
-}
-
-.primary-button {
-  background-color: #3b82f6;
-  color: white;
-  border: none;
-  padding: 10px 20px;
-  border-radius: 4px;
-  font-size: 14px;
-  font-weight: bold;
-  cursor: pointer;
-  margin-right: 10px;
-  transition: background-color 0.2s;
-}
-
-.primary-button:hover {
-  background-color: #2563eb;
-}
-
-.secondary-button {
-  background-color: #ef4444;
-  color: white;
-  border: none;
-  padding: 10px 20px;
-  border-radius: 4px;
-  font-size: 14px;
-  font-weight: bold;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.secondary-button:hover {
-  background-color: #dc2626;
-}
-
-.secondary-button:disabled {
-  background-color: #9ca3af;
-  cursor: not-allowed;
-}
-
-.status {
-  margin-top: 10px;
-  font-size: 12px;
-  color: #6b7280;
-}
-
-/* 步骤列表样式 */
-.steps-section {
-  margin-bottom: 20px;
 }
 
 .steps-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  flex-shrink: 0;
 }
 
 .steps-header h2 {
-  margin-bottom: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #718096;
+  margin: 0;
+}
+
+.steps-count {
+  color: #a0aec0;
+  font-weight: 400;
+  font-size: 12px;
+  margin-left: 4px;
 }
 
 .clear-button {
-  background: none;
-  border: 1px solid #e5e7eb;
-  color: #6b7280;
-  padding: 3px 8px;
-  border-radius: 4px;
-  font-size: 12px;
+  background: #e8ecf1;
+  border: none;
+  padding: 5px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #a0aec0;
   cursor: pointer;
-  transition: all 0.2s;
-  white-space: nowrap;
+  transition: all 0.15s ease;
+  box-shadow:
+    2px 2px 4px rgba(163, 177, 198, 0.5),
+    -2px -2px 4px rgba(255, 255, 255, 0.7);
 }
 
 .clear-button:hover {
-  background-color: #fee2e2;
-  border-color: #ef4444;
-  color: #ef4444;
+  color: #e53e3e;
+  box-shadow:
+    3px 3px 6px rgba(163, 177, 198, 0.55),
+    -3px -3px 6px rgba(255, 255, 255, 0.8);
 }
 
-.steps-container {
-  max-height: 200px;
+.clear-button:active {
+  box-shadow:
+    inset 2px 2px 4px rgba(163, 177, 198, 0.5),
+    inset -2px -2px 4px rgba(255, 255, 255, 0.7);
+}
+
+/* 步骤容器（新拟态凹陷） */
+.sidepanel-container .steps-container {
+  flex: 1;
+  max-height: none;
   overflow-y: auto;
-  border: 1px solid #e5e7eb;
-  border-radius: 4px;
+  background: #e8ecf1;
+  border-radius: 14px;
   padding: 10px;
+  box-shadow:
+    inset 4px 4px 8px rgba(163, 177, 198, 0.55),
+    inset -4px -4px 8px rgba(255, 255, 255, 0.8);
 }
 
+/* 空状态提示 */
 .empty-message {
   text-align: center;
-  color: #6b7280;
+  color: #a0aec0;
   font-style: italic;
+  font-size: 12px;
+  padding: 20px 0;
 }
 
+/* 步骤项 */
 .step-item {
   display: flex;
   align-items: center;
-  padding: 8px;
-  border-bottom: 1px solid #e5e7eb;
-  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  margin-bottom: 6px;
+  background: #e8ecf1;
+  box-shadow:
+    3px 3px 6px rgba(163, 177, 198, 0.5),
+    -3px -3px 6px rgba(255, 255, 255, 0.8);
+  transition: all 0.15s ease;
 }
 
 .step-item:last-child {
-  border-bottom: none;
   margin-bottom: 0;
 }
 
+.step-item:hover {
+  box-shadow:
+    4px 4px 8px rgba(163, 177, 198, 0.6),
+    -4px -4px 8px rgba(255, 255, 255, 0.9);
+}
+
 .step-number {
-  width: 24px;
-  height: 24px;
-  background-color: #3b82f6;
+  width: 22px;
+  height: 22px;
+  background: linear-gradient(145deg, #fb923c, #f97316);
   color: white;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  font-weight: bold;
+  font-size: 11px;
+  font-weight: 700;
   margin-right: 10px;
+  flex-shrink: 0;
+  box-shadow:
+    2px 2px 4px rgba(163, 177, 198, 0.4),
+    -2px -2px 4px rgba(255, 255, 255, 0.6);
 }
 
 .step-content {
   flex: 1;
+  min-width: 0;
 }
 
 .step-text {
   font-size: 12px;
-  margin-bottom: 4px;
+  color: #4a5568;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .step-selector {
   font-size: 10px;
-  color: #6b7280;
+  color: #a0aec0;
   word-break: break-all;
 }
 
 .step-screenshot {
-  width: 60px;
-  height: 40px;
+  width: 56px;
+  height: 38px;
   object-fit: cover;
-  border-radius: 4px;
+  border-radius: 8px;
   margin-left: 10px;
+  flex-shrink: 0;
+  box-shadow:
+    2px 2px 4px rgba(163, 177, 198, 0.4),
+    -2px -2px 4px rgba(255, 255, 255, 0.6);
 }
 
-/* 导出区域样式 */
-.export-section {
-  margin-top: 20px;
+/* 导出区域 */
+.sidepanel-container .export-section {
+  padding: 16px 20px;
+  background: #e8ecf1;
+  border-radius: 18px;
+  flex-shrink: 0;
+  box-shadow:
+    5px 5px 10px rgba(163, 177, 198, 0.55),
+    -5px -5px 10px rgba(255, 255, 255, 0.85);
+}
+
+.export-section h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #718096;
+  margin-bottom: 10px;
 }
 
 .export-options {
   display: flex;
-  gap: 10px;
+  gap: 12px;
 }
 
+/* 导出按钮（新拟态绿色） */
 .export-button {
   flex: 1;
-  background-color: #10b981;
-  color: white;
+  background: linear-gradient(145deg, #68d391, #48bb78);
   border: none;
-  padding: 8px 12px;
-  border-radius: 4px;
+  padding: 9px 12px;
+  border-radius: 12px;
   font-size: 12px;
-  font-weight: bold;
+  font-weight: 600;
+  color: white;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.15s ease;
+  box-shadow:
+    4px 4px 8px rgba(163, 177, 198, 0.5),
+    -4px -4px 8px rgba(255, 255, 255, 0.7),
+    2px 2px 4px rgba(72, 187, 120, 0.3);
 }
 
 .export-button:hover {
-  background-color: #059669;
+  background: linear-gradient(145deg, #9ae6b4, #68d391);
+  box-shadow:
+    6px 6px 12px rgba(163, 177, 198, 0.55),
+    -6px -6px 12px rgba(255, 255, 255, 0.8),
+    3px 3px 6px rgba(72, 187, 120, 0.35);
+  color: white;
 }
 
-/* 覆盖层样式 */
+.export-button:active {
+  background: linear-gradient(145deg, #38a169, #48bb78);
+  box-shadow:
+    inset 3px 3px 6px rgba(0, 0, 0, 0.12),
+    inset -3px -3px 6px rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* ========================
+   页面高亮覆盖层（注入到目标网页）
+   ======================== */
 .recording-overlay {
   position: fixed;
   top: 0;
@@ -379,21 +500,24 @@ body {
   }
 }
 
-/* 滚动条样式 */
+/* 新拟态滚动条 */
 ::-webkit-scrollbar {
   width: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: #e8ecf1;
   border-radius: 3px;
+  box-shadow:
+    inset 2px 2px 4px rgba(163, 177, 198, 0.4),
+    inset -2px -2px 4px rgba(255, 255, 255, 0.7);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: linear-gradient(145deg, #d1d5db, #a0aec0);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1;
+  background: linear-gradient(145deg, #cbd5e0, #94a3b8);
 }
