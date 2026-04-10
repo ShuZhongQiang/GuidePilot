@@ -15,9 +15,9 @@
   ],
   "action": {
     "default_icon": {
-      "16": "icons/steps.svg",
-      "48": "icons/steps48.svg",
-      "128": "icons/steps128.svg"
+      "16": "icons/steps.png",
+      "48": "icons/steps48.png",
+      "128": "icons/steps128.png"
     }
   },
   "side_panel": {
@@ -35,8 +35,8 @@
   ],
   "options_page": "options.html",
   "icons": {
-    "16": "icons/steps.svg",
-    "48": "icons/steps48.svg",
-    "128": "icons/steps128.svg"
+    "16": "icons/steps.png",
+    "48": "icons/steps48.png",
+    "128": "icons/steps128.png"
   }
 }
