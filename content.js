@@ -2,6 +2,8 @@
 let overlay = null;
 const NATIVE_CAPTURE_RETRIES = 2;
 const NATIVE_CAPTURE_RETRY_DELAY_MS = 80;
+const STRONG_INTERACTIVE_SELECTOR = 'a,button,input,textarea,select,option,[role="button"],[role="link"],[contenteditable="true"]';
+const CARD_LIKE_PATTERN = /(card|item|panel|tile|list|row|cell|module|block|box|content)/i;
 
 function init() {
   createOverlay();
@@ -61,11 +63,12 @@ async function handleClick(event) {
     return;
   }
 
-  const target = event.target;
-  if (!(target instanceof Element)) {
+  const rawTarget = event.target;
+  if (!(rawTarget instanceof Element)) {
     return;
   }
 
+  const target = resolveClickTarget(rawTarget, event);
   const highlightRect = highlightElement(target);
   const selector = getSelector(target);
   const text = getElementText(target);
@@ -107,6 +110,107 @@ async function handleClick(event) {
     }
     console.error('[updateStepScreenshot] failed:', chrome.runtime.lastError);
   });
+}
+
+function resolveClickTarget(element, event) {
+  if (isStrongInteractiveElement(element)) {
+    return element;
+  }
+
+  const originRect = element.getBoundingClientRect();
+  const originArea = Math.max(originRect.width * originRect.height, 1);
+  const viewportArea = Math.max(window.innerWidth * window.innerHeight, 1);
+  const clickX = event.clientX;
+  const clickY = event.clientY;
+
+  let bestElement = element;
+  let bestScore = 0;
+  let current = element.parentElement;
+  let depth = 0;
+
+  while (current && current !== document.body && depth < 8) {
+    const rect = current.getBoundingClientRect();
+    const area = rect.width * rect.height;
+
+    if (area >= 1 && containsPoint(rect, clickX, clickY)) {
+      const growth = area / originArea;
+      const areaRatio = area / viewportArea;
+      const cardLike = isCardLikeElement(current);
+      const clickableContainer = hasClickableContainerHint(current);
+
+      let score = 0;
+      if (cardLike) {
+        score += 3;
+      }
+      if (clickableContainer) {
+        score += 2;
+      }
+      if (growth > 1.4) {
+        score += Math.min(3, Math.log2(growth));
+      }
+      if (areaRatio > 0.55) {
+        score -= 4;
+      } else if (areaRatio > 0.35) {
+        score -= 2;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestElement = current;
+      }
+    }
+
+    current = current.parentElement;
+    depth += 1;
+  }
+
+  return bestElement;
+}
+
+function isStrongInteractiveElement(element) {
+  if (element.matches(STRONG_INTERACTIVE_SELECTOR)) {
+    return true;
+  }
+
+  const nearestInteractive = element.closest(STRONG_INTERACTIVE_SELECTOR);
+  return nearestInteractive === element;
+}
+
+function hasClickableContainerHint(element) {
+  if (element.hasAttribute('onclick') || element.hasAttribute('data-click') || element.hasAttribute('data-action')) {
+    return true;
+  }
+
+  const style = window.getComputedStyle(element);
+  if (style.cursor === 'pointer') {
+    return true;
+  }
+
+  const role = element.getAttribute('role');
+  if (role === 'button' || role === 'link') {
+    return true;
+  }
+
+  return false;
+}
+
+function isCardLikeElement(element) {
+  const className = typeof element.className === 'string' ? element.className : '';
+  const id = element.id || '';
+  const role = element.getAttribute('role') || '';
+  const dataType = element.getAttribute('data-type') || '';
+  const hintText = `${className} ${id} ${role} ${dataType}`.toLowerCase();
+
+  if (CARD_LIKE_PATTERN.test(hintText)) {
+    return true;
+  }
+
+  const rect = element.getBoundingClientRect();
+  return rect.width > 140 && rect.height > 70 && element.childElementCount >= 2;
+}
+
+function containsPoint(rect, x, y) {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 }
 
 function highlightElement(element) {
@@ -185,14 +289,36 @@ function getSelector(element) {
 
 function getElementText(element) {
   if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-    return element.placeholder || element.value || element.name || element.type || '';
+    return normalizeText(element.placeholder || element.value || element.name || element.type || '');
   }
 
   if (element.tagName === 'BUTTON' || element.tagName === 'A') {
-    return element.textContent.trim() || element.innerText.trim() || element.title || element.alt || '';
+    return normalizeText(element.textContent.trim() || element.innerText.trim() || element.title || element.alt || '');
   }
 
-  return element.textContent.trim() || element.innerText.trim() || element.title || element.alt || element.tagName;
+  const heading = element.querySelector('h1,h2,h3,h4,h5,h6,.title,.name,[data-title]');
+  if (heading) {
+    const headingText = normalizeText(heading.textContent || heading.innerText || '');
+    if (headingText) {
+      return headingText;
+    }
+  }
+
+  return normalizeText(
+    element.textContent.trim() ||
+    element.innerText.trim() ||
+    element.title ||
+    element.alt ||
+    element.tagName
+  );
+}
+
+function normalizeText(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) {
+    return '';
+  }
+  return text.length > 80 ? `${text.slice(0, 80)}...` : text;
 }
 
 async function captureScreenshot(highlightRect) {
