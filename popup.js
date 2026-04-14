@@ -1,4 +1,4 @@
-let isRecording = false;
+﻿let isRecording = false;
 let steps = [];
 
 const startRecordBtn = document.getElementById('start-record');
@@ -8,14 +8,33 @@ const stepsContainer = document.getElementById('steps-container');
 const exportMarkdownBtn = document.getElementById('export-markdown');
 const exportHtmlBtn = document.getElementById('export-html');
 const clearStepsBtn = document.getElementById('clear-steps');
-// 侧边栏专属元素（popup 模式下不存在，做兼容处理）
 const recordingBadge = document.getElementById('recording-badge');
 const stepsCount = document.getElementById('steps-count');
 
+let jszip = null;
+
 function init() {
+  loadJszipLibrary();
   loadState();
   setupEventListeners();
   setupStorageListeners();
+}
+
+function loadJszipLibrary() {
+  return new Promise((resolve) => {
+    const script = document.createElement('script');
+    script.src = 'lib/jszip.min.js';
+    script.onload = () => {
+      jszip = new JSZip();
+      resolve();
+    };
+    script.onerror = () => {
+      console.error('[loadJszipLibrary] failed to load JSZip');
+      jszip = null;
+      resolve();
+    };
+    document.head.appendChild(script);
+  });
 }
 
 function loadState() {
@@ -28,6 +47,10 @@ function loadState() {
 }
 
 function updateUI() {
+  if (!startRecordBtn || !stopRecordBtn || !recordingStatus) {
+    return;
+  }
+
   if (isRecording) {
     startRecordBtn.disabled = true;
     stopRecordBtn.disabled = false;
@@ -49,11 +72,25 @@ function updateUI() {
 }
 
 function setupEventListeners() {
-  startRecordBtn.addEventListener('click', startRecording);
-  stopRecordBtn.addEventListener('click', stopRecording);
-  exportMarkdownBtn.addEventListener('click', () => exportSteps('markdown'));
-  exportHtmlBtn.addEventListener('click', () => exportSteps('html'));
-  clearStepsBtn.addEventListener('click', clearSteps);
+  if (startRecordBtn) {
+    startRecordBtn.addEventListener('click', startRecording);
+  }
+  if (stopRecordBtn) {
+    stopRecordBtn.addEventListener('click', stopRecording);
+  }
+  if (exportMarkdownBtn) {
+    exportMarkdownBtn.addEventListener('click', () => {
+      exportSteps('markdown');
+    });
+  }
+  if (exportHtmlBtn) {
+    exportHtmlBtn.addEventListener('click', () => {
+      exportSteps('html');
+    });
+  }
+  if (clearStepsBtn) {
+    clearStepsBtn.addEventListener('click', clearSteps);
+  }
 }
 
 function setupStorageListeners() {
@@ -74,11 +111,6 @@ function setupStorageListeners() {
   });
 }
 
-/**
- * 通过 background 获取当前活跃的普通网页 Tab。
- * 侧边栏页面调用 chrome.tabs.query 会因上下文问题拿到错误的 tab，
- * 所以统一委托给 Service Worker 查询。
- */
 function getActiveTab() {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ action: 'getActiveTab' }, (response) => {
@@ -98,9 +130,6 @@ function startRecording() {
       return;
     }
 
-    console.log('[popup startRecording] 目标tab:', activeTab.id, activeTab.url);
-
-    // 开始新录制前先清空旧步骤
     chrome.storage.local.set({ steps: [] }, () => {
       steps = [];
       renderSteps();
@@ -112,13 +141,13 @@ function startRecording() {
         },
         (response) => {
           if (response && response.ok) {
-            console.log('[popup startRecording] ✅ 录制已启动');
             isRecording = true;
             updateUI();
-          } else {
-            console.error('[popup startRecording] ❌ background响应失败', chrome.runtime.lastError);
-            alert('录制启动失败，请确认网页已完全加载后重试。');
+            return;
           }
+
+          console.error('[popup startRecording] background响应失败', chrome.runtime.lastError);
+          alert('录制启动失败，请确认网页已完全加载后重试。');
         }
       );
     });
@@ -158,6 +187,10 @@ function clearSteps() {
 }
 
 function renderSteps() {
+  if (!stepsContainer) {
+    return;
+  }
+
   if (stepsCount) {
     stepsCount.textContent = steps.length > 0 ? `(${steps.length})` : '';
   }
@@ -186,26 +219,177 @@ function renderSteps() {
   });
 }
 
-function exportSteps(format) {
+async function exportSteps(format) {
   if (steps.length === 0) {
     alert('没有可导出的步骤');
     return;
   }
 
+  const { stepsForDocument, imageFiles } = prepareExportAssets(steps);
+
   let content = '';
   let filename = '';
+  let mimeType = '';
 
   if (format === 'markdown') {
-    content = generateMarkdown();
+    content = generateMarkdown(stepsForDocument);
     filename = '步骤指南.md';
+    mimeType = 'text/markdown;charset=utf-8';
   } else if (format === 'html') {
-    content = generateHtml();
+    content = generateHtml(stepsForDocument);
     filename = '步骤指南.html';
+    mimeType = 'text/html;charset=utf-8';
+  } else {
+    return;
   }
 
-  const blob = new Blob([content], {
-    type: format === 'markdown' ? 'text/markdown' : 'text/html'
+  const folderName = buildExportFolderName();
+
+  try {
+    if (jszip) {
+      await downloadExportFilesWithZip({
+        folderName,
+        mainFile: {
+          filename,
+          blob: new Blob([content], { type: mimeType })
+        },
+        imageFiles
+      });
+    } else {
+      await downloadExportFiles({
+        folderName,
+        mainFile: {
+          filename,
+          blob: new Blob([content], { type: mimeType })
+        },
+        imageFiles
+      });
+    }
+
+    alert(`导出完成：${filename} + ${imageFiles.length} 张图片`);
+  } catch (error) {
+    console.error('[exportSteps] 导出失败:', error);
+    alert('导出失败，请重试。');
+  }
+}
+
+function prepareExportAssets(sourceSteps) {
+  const stepsForDocument = sourceSteps.map((step) => ({ ...step }));
+  const imageFiles = [];
+
+  stepsForDocument.forEach((step, index) => {
+    if (!isImageDataUrl(step.screenshot)) {
+      return;
+    }
+
+    const extension = getImageExtension(step.screenshot);
+    const imageFilename = `step-${index + 1}.${extension}`;
+    const relativePath = `images/${imageFilename}`;
+
+    imageFiles.push({
+      filename: relativePath,
+      blob: dataUrlToBlob(step.screenshot)
+    });
+
+    step.screenshot = relativePath;
   });
+
+  return {
+    stepsForDocument,
+    imageFiles
+  };
+}
+
+function isImageDataUrl(value) {
+  return typeof value === 'string' && value.startsWith('data:image/');
+}
+
+function getImageExtension(dataUrl) {
+  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,/.exec(dataUrl);
+  const mimeType = match ? match[1].toLowerCase() : 'image/png';
+
+  if (mimeType === 'image/jpeg') {
+    return 'jpg';
+  }
+  if (mimeType === 'image/svg+xml') {
+    return 'svg';
+  }
+  if (mimeType.includes('/')) {
+    return mimeType.split('/')[1].replace('x-icon', 'ico');
+  }
+
+  return 'png';
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [header, base64] = dataUrl.split(',', 2);
+  const mimeMatch = /^data:(.*?);base64$/.exec(header || '');
+  const mimeType = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+
+  const binary = atob(base64 || '');
+  const bytes = new Uint8Array(binary.length);
+
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  return new Blob([bytes], { type: mimeType });
+}
+
+function buildExportFolderName() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, '0');
+
+  return `step-guide-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
+async function downloadExportFiles({ folderName, mainFile, imageFiles }) {
+  const useChromeDownloads = chrome.downloads && typeof chrome.downloads.download === 'function';
+
+  if (useChromeDownloads) {
+    await downloadBlobWithChrome(mainFile.blob, `${folderName}/${mainFile.filename}`);
+
+    for (const imageFile of imageFiles) {
+      const leafName = imageFile.filename.split('/').pop() || imageFile.filename;
+      await downloadBlobWithChrome(imageFile.blob, `${folderName}/${leafName}`);
+    }
+
+    return;
+  }
+
+  triggerBlobDownload(mainFile.blob, mainFile.filename);
+  for (const imageFile of imageFiles) {
+    const leafName = imageFile.filename.split('/').pop() || imageFile.filename;
+    triggerBlobDownload(imageFile.blob, leafName);
+  }
+}
+
+function downloadBlobWithChrome(blob, filename) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+
+    chrome.downloads.download(
+      {
+        url,
+        filename,
+        saveAs: false,
+        conflictAction: 'uniquify'
+      },
+      (downloadId) => {
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+        if (chrome.runtime.lastError || !downloadId) {
+          reject(new Error(chrome.runtime.lastError ? chrome.runtime.lastError.message : 'download failed'));
+          return;
+        }
+
+        resolve(downloadId);
+      }
+    );
+  });
+}
+
+function triggerBlobDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
 
@@ -214,13 +398,30 @@ function exportSteps(format) {
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
+
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function generateMarkdown() {
+async function downloadExportFilesWithZip({ folderName, mainFile, imageFiles }) {
+  const zip = new JSZip();
+
+  zip.file(mainFile.filename, mainFile.blob);
+
+  for (const imageFile of imageFiles) {
+    const leafName = imageFile.filename.split('/').pop() || imageFile.filename;
+    zip.file(`images/${leafName}`, imageFile.blob);
+  }
+
+  const content = await zip.generateAsync({ type: 'blob' });
+
+  const zipFilename = `${folderName}.zip`;
+  triggerBlobDownload(content, zipFilename);
+}
+
+function generateMarkdown(stepsForDocument) {
   let markdown = '# 步骤指南\n\n';
 
-  steps.forEach((step, index) => {
+  stepsForDocument.forEach((step, index) => {
     markdown += `## 步骤 ${index + 1}\n\n`;
     markdown += `- 操作: ${step.type || 'click'}\n`;
     markdown += `- 元素: ${step.text || '未知元素'}\n`;
@@ -240,7 +441,7 @@ function generateMarkdown() {
   return markdown;
 }
 
-function generateHtml() {
+function generateHtml(stepsForDocument) {
   let html = `
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -314,7 +515,7 @@ function generateHtml() {
     <h1>步骤指南</h1>
   `;
 
-  steps.forEach((step, index) => {
+  stepsForDocument.forEach((step, index) => {
     html += `
     <div class="step">
       <h2>步骤 ${index + 1}</h2>

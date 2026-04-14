@@ -487,12 +487,6 @@ function annotateScreenshot(dataUrl, highlightRect) {
       context.stroke();
       context.restore();
 
-      const centerRadius = Math.max(4, Math.round(lineWidth * 1.5));
-      context.beginPath();
-      context.arc(x + width / 2, y + height / 2, centerRadius, 0, Math.PI * 2);
-      context.fillStyle = HIGHLIGHT_THEME.center;
-      context.fill();
-
       resolve(canvas.toDataURL('image/png'));
     };
 
