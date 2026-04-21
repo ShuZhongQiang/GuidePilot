@@ -262,28 +262,6 @@ async function handleClick(event) {
     return;
   }
 
-  try {
-    chrome.runtime.sendMessage({
-      action: 'captureStep',
-      stepId,
-      type: 'click',
-      selector,
-      text,
-      screenshot: null
-    }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error('[captureStep] failed:', chrome.runtime.lastError);
-        return;
-      }
-      if (response && response.ok) {
-        return;
-      }
-    });
-  } catch (error) {
-    console.error('[captureStep] error:', error);
-    return;
-  }
-
   let screenshot = null;
   try {
     screenshot = await captureScreenshot(highlightRect);
@@ -298,12 +276,17 @@ async function handleClick(event) {
 
   try {
     chrome.runtime.sendMessage({
-      action: 'updateStepScreenshot',
-      stepId,
-      screenshot
+      action: 'commitCapturedStep',
+      step: {
+        id: stepId,
+        type: 'click',
+        selector,
+        text,
+        screenshot
+      }
     }, (response) => {
       if (chrome.runtime.lastError) {
-        console.error('[updateStepScreenshot] failed:', chrome.runtime.lastError);
+        console.error('[commitCapturedStep] failed:', chrome.runtime.lastError);
         return;
       }
       if (response && response.ok) {
@@ -311,7 +294,7 @@ async function handleClick(event) {
       }
     });
   } catch (error) {
-    console.error('[updateStepScreenshot] error:', error);
+    console.error('[commitCapturedStep] error:', error);
   }
 }
 
@@ -587,38 +570,27 @@ async function handleConfirmStep(stepId, save) {
     return;
   }
 
-  chrome.runtime.sendMessage({
-    action: 'captureStep',
-    stepId,
-    type: 'click',
-    selector,
-    text,
-    screenshot: null
-  }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error('[captureStep] failed:', chrome.runtime.lastError);
-      return;
-    }
-    if (response && response.ok) {
-      return;
-    }
-  });
-
   let screenshot = null;
   screenshot = await captureScreenshot(highlightRect);
 
   if (!screenshot) {
     console.warn('[captureScreenshot] failed');
+    replayPendingManualAction();
     return;
   }
 
   chrome.runtime.sendMessage({
-    action: 'updateStepScreenshot',
-    stepId,
-    screenshot
+    action: 'commitCapturedStep',
+    step: {
+      id: stepId,
+      type: 'click',
+      selector,
+      text,
+      screenshot
+    }
   }, (response) => {
     if (chrome.runtime.lastError) {
-      console.error('[updateStepScreenshot] failed:', chrome.runtime.lastError);
+      console.error('[commitCapturedStep] failed:', chrome.runtime.lastError);
       return;
     }
     if (response && response.ok) {

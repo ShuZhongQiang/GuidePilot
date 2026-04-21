@@ -5,6 +5,8 @@ const DEFAULT_STATE = {
   recordingMode: 'auto'
 };
 
+const stepWriteLocks = new Map();
+
 function getStorage(keys) {
   return new Promise((resolve) => {
     chrome.storage.local.get(keys, resolve);
@@ -15,6 +17,20 @@ function setStorage(data) {
   return new Promise((resolve) => {
     chrome.storage.local.set(data, resolve);
   });
+}
+
+async function acquireStepLock(stepId, tabId) {
+  const lockKey = `${stepId}:${tabId}`;
+  if (stepWriteLocks.has(lockKey)) {
+    return false;
+  }
+  stepWriteLocks.set(lockKey, true);
+  return true;
+}
+
+function releaseStepLock(stepId, tabId) {
+  const lockKey = `${stepId}:${tabId}`;
+  stepWriteLocks.delete(lockKey);
 }
 
 async function getRecorderState() {
@@ -158,43 +174,99 @@ async function stopRecording(tabId) {
   await sendMessageToTab(targetTabId, { action: 'stopRecording' });
 }
 
-async function captureStep(message, sender) {
+async function commitCapturedStep(message, sender) {
+  if (!message || !message.step) {
+    console.error('[commitCapturedStep] invalid message or missing step');
+    return { ok: false, error: 'invalid_message' };
+  }
+
   const state = await getRecorderState();
   const senderTabId = sender.tab ? sender.tab.id : null;
 
   if (!state.isRecording) {
-    return;
+    console.warn('[commitCapturedStep] recording not active');
+    return { ok: false, error: 'not_recording' };
   }
 
   if (senderTabId !== state.recordingTabId) {
-    return;
+    console.warn('[commitCapturedStep] tabId mismatch');
+    return { ok: false, error: 'tab_mismatch' };
   }
 
-  const step = {
-    id: message.stepId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    type: message.type || 'click',
-    selector: message.selector || '',
-    text: message.text || '',
-    tabId: senderTabId,
-    url: sender.tab ? sender.tab.url : '',
-    title: sender.tab ? sender.tab.title : '',
-    timestamp: new Date().toISOString(),
-    screenshot: message.screenshot || null
-  };
+  const incomingId = message.step.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  const steps = [...state.steps, step];
-  await setStorage({ steps });
+  const lockAcquired = await acquireStepLock(incomingId, senderTabId);
+  if (!lockAcquired) {
+    console.log('[commitCapturedStep] concurrent write detected, skipping:', incomingId);
+    return { ok: true, stepId: incomingId, deduplicated: true };
+  }
+
+  try {
+    const freshState = await getRecorderState();
+    const exists = freshState.steps.some(
+      (step) => step.id === incomingId && step.tabId === senderTabId
+    );
+
+    if (exists) {
+      console.log('[commitCapturedStep] step already exists, skipping:', incomingId);
+      return { ok: true, stepId: incomingId, deduplicated: true };
+    }
+
+    const step = {
+      id: incomingId,
+      type: message.step.type || 'click',
+      selector: message.step.selector || '',
+      text: message.step.text || '',
+      tabId: senderTabId,
+      url: sender.tab ? sender.tab.url : '',
+      title: sender.tab ? sender.tab.title : '',
+      timestamp: new Date().toISOString(),
+      screenshot: message.step.screenshot || null
+    };
+
+    const steps = [...freshState.steps, step];
+    await setStorage({ steps });
+
+    return { ok: true, stepId: incomingId };
+  } finally {
+    releaseStepLock(incomingId, senderTabId);
+  }
+}
+
+async function captureStep(message, sender) {
+  console.warn('[captureStep] deprecated, use commitCapturedStep instead');
+  const result = await commitCapturedStep({
+    step: {
+      id: message.stepId,
+      type: message.type,
+      selector: message.selector,
+      text: message.text,
+      screenshot: message.screenshot || null
+    }
+  }, sender);
+  return result;
 }
 
 async function updateStepScreenshot(message, sender) {
-  if (!message.stepId || !message.screenshot) {
-    return;
+  if (!message || !message.stepId || !message.screenshot) {
+    console.warn('[updateStepScreenshot] invalid message, missing stepId or screenshot');
+    return { ok: false, error: 'invalid_message' };
   }
 
   const state = await getRecorderState();
   const senderTabId = sender.tab ? sender.tab.id : null;
-  let changed = false;
 
+  if (!state.isRecording) {
+    console.warn('[updateStepScreenshot] recording not active');
+    return { ok: false, error: 'not_recording' };
+  }
+
+  if (senderTabId !== state.recordingTabId) {
+    console.warn('[updateStepScreenshot] tabId mismatch');
+    return { ok: false, error: 'tab_mismatch' };
+  }
+
+  let changed = false;
   const steps = state.steps.map((step) => {
     if (step.id !== message.stepId) {
       return step;
@@ -212,10 +284,12 @@ async function updateStepScreenshot(message, sender) {
   });
 
   if (!changed) {
-    return;
+    console.warn('[updateStepScreenshot] step not found or tabId mismatch:', message.stepId);
+    return { ok: false, error: 'step_not_found' };
   }
 
   await setStorage({ steps });
+  return { ok: true, stepId: message.stepId };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -277,12 +351,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'captureStep') {
-    captureStep(message, sender).then(() => sendResponse({ ok: true }));
+    captureStep(message, sender).then((result) => sendResponse(result));
+    return true;
+  }
+
+  if (message.action === 'commitCapturedStep') {
+    commitCapturedStep(message, sender).then((result) => sendResponse(result));
     return true;
   }
 
   if (message.action === 'updateStepScreenshot') {
-    updateStepScreenshot(message, sender).then(() => sendResponse({ ok: true }));
+    updateStepScreenshot(message, sender).then((result) => sendResponse(result));
     return true;
   }
 
