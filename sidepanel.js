@@ -314,8 +314,8 @@ function renderSteps() {
     const deleteButton = document.createElement('button');
     deleteButton.type = 'button';
     deleteButton.className = 'step-delete-btn';
-    deleteButton.textContent = '删除';
     deleteButton.title = '删除此步骤';
+    deleteButton.innerHTML = '<img src="icons/delete.svg" alt="删除" class="delete-icon">';
     deleteButton.addEventListener('click', () => {
       deleteStep(index);
     });

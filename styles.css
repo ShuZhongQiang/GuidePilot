@@ -425,6 +425,12 @@ body {
     inset -2px -2px 4px rgba(255, 255, 255, 0.5);
 }
 
+.step-delete-btn .delete-icon {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
 /* 导出区域 */
 .sidepanel-container .export-section {
   padding: 16px 20px;
