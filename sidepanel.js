@@ -1,690 +1,453 @@
-let isRecording = false;
-let steps = [];
-let recordingMode = 'auto';
+let panelState = createInitialPanelState();
+const previewLoadState = new Set();
+
+const messages = window.StepRecorderMessages;
 
 const startRecordBtn = document.getElementById('start-record');
 const stopRecordBtn = document.getElementById('stop-record');
 const recordingStatus = document.getElementById('recording-status');
+const recordingBadge = document.getElementById('recording-badge');
 const stepsContainer = document.getElementById('steps-container');
+const stepsCount = document.getElementById('steps-count');
+const clearStepsBtn = document.getElementById('clear-steps');
 const exportMarkdownBtn = document.getElementById('export-markdown');
 const exportHtmlBtn = document.getElementById('export-html');
-const clearStepsBtn = document.getElementById('clear-steps');
-const recordingBadge = document.getElementById('recording-badge');
-const stepsCount = document.getElementById('steps-count');
+const exportJsonBtn = document.getElementById('export-json');
+const aiGenerateBtn = document.getElementById('ai-generate');
 const modeRadios = document.querySelectorAll('input[name="recording-mode"]');
+const sessionOverview = document.getElementById('session-overview');
+const documentStatus = document.getElementById('document-status');
 
-let jszip = null;
+function setDocumentStatus(status, message) {
+  panelState = {
+    ...panelState,
+    documentStatus: status,
+    documentMessage: message || ''
+  };
 
-function init() {
-  loadJszipLibrary();
-  loadState();
-  setupEventListeners();
-  setupStorageListeners();
+  renderDocumentStatus();
 }
 
-function loadJszipLibrary() {
-  return new Promise((resolve) => {
-    const script = document.createElement('script');
-    script.src = 'lib/jszip.min.js';
-    script.onload = () => {
-      jszip = new JSZip();
-      resolve();
-    };
-    script.onerror = () => {
-      console.error('[loadJszipLibrary] failed to load JSZip');
-      jszip = null;
-      resolve();
-    };
-    document.head.appendChild(script);
-  });
-}
-
-function loadState() {
-  chrome.runtime.sendMessage({ action: 'getState' }, (result) => {
-    if (chrome.runtime.lastError || !result) {
-      console.error('[loadState] failed:', chrome.runtime.lastError);
-      return;
-    }
-
-    steps = Array.isArray(result.steps) ? result.steps : [];
-    isRecording = result.isRecording === true;
-    recordingMode = result.recordingMode || 'auto';
-    renderSteps();
-    updateUI();
-    updateModeUI();
-  });
-}
-
-function updateUI() {
-  if (!startRecordBtn || !stopRecordBtn || !recordingStatus) {
+function renderDocumentStatus() {
+  if (!documentStatus) {
     return;
   }
 
-  if (isRecording) {
-    startRecordBtn.disabled = true;
-    stopRecordBtn.disabled = false;
-    recordingStatus.textContent = '录制中...';
-    recordingStatus.style.color = '#ef4444';
-    if (recordingBadge) {
-      recordingBadge.classList.remove('hidden');
-    }
+  const status = panelState.documentStatus || 'idle';
+  const message = panelState.documentMessage || '';
+
+  documentStatus.className = 'doc-status doc-status--' + status;
+  documentStatus.textContent = message || (status === 'building' ? '文档构建中...' : '文档尚未构建');
+}
+
+function renderSessionOverview() {
+  if (!sessionOverview) {
     return;
   }
 
-  startRecordBtn.disabled = false;
-  stopRecordBtn.disabled = true;
-  recordingStatus.textContent = '就绪';
-  recordingStatus.style.color = '#6b7280';
-  if (recordingBadge) {
-    recordingBadge.classList.add('hidden');
+  const session = panelState.session;
+  if (!session) {
+    sessionOverview.innerHTML = '<div class="overview-empty">当前没有活动会话</div>';
+    return;
   }
+
+  sessionOverview.innerHTML = [
+    '<div><strong>Session:</strong> ' + escapeHtml(session.id || '') + '</div>',
+    '<div><strong>状态:</strong> ' + escapeHtml(session.status || '') + '</div>',
+    '<div><strong>模式:</strong> ' + escapeHtml(session.mode || '') + '</div>',
+    '<div><strong>步骤数:</strong> ' + String(session.stepCount || panelState.steps.length || 0) + '</div>'
+  ].join('');
 }
 
 function updateModeUI() {
-  if (!modeRadios) {
+  modeRadios.forEach(function eachRadio(radio) {
+    radio.checked = radio.value === panelState.recordingMode;
+  });
+}
+
+function updateStatusUI() {
+  const isRecording = panelState.isRecording === true;
+
+  if (startRecordBtn) {
+    startRecordBtn.disabled = isRecording;
+  }
+
+  if (stopRecordBtn) {
+    stopRecordBtn.disabled = !isRecording;
+  }
+
+  if (recordingStatus) {
+    recordingStatus.textContent = isRecording ? '录制中...' : '就绪';
+    recordingStatus.style.color = isRecording ? '#ef4444' : '#6b7280';
+  }
+
+  if (recordingBadge) {
+    if (isRecording) {
+      recordingBadge.classList.remove('hidden');
+    } else {
+      recordingBadge.classList.add('hidden');
+    }
+  }
+
+  if (stepsCount) {
+    stepsCount.textContent = panelState.steps.length > 0 ? '(' + panelState.steps.length + ')' : '';
+  }
+}
+
+function renderStepsView() {
+  renderSteps(stepsContainer, panelState.steps, {
+    onDeleteStep: handleDeleteStep,
+    onLoadPreview: handleLoadPreview
+  });
+}
+
+function renderAll() {
+  updateStatusUI();
+  updateModeUI();
+  renderSessionOverview();
+  renderStepsView();
+  renderDocumentStatus();
+  ensureIdlePreviews();
+}
+
+function mergeSnapshot(snapshot) {
+  panelState = applySnapshot(panelState, snapshot);
+  renderAll();
+}
+
+function handlePanelEventMessage(eventMessage) {
+  panelState = applyPanelEvent(panelState, eventMessage);
+  renderAll();
+
+  if (eventMessage && eventMessage.kind === 'event' && eventMessage.type === messages.EVENT.ASSET_READY) {
+    const payload = eventMessage.payload || {};
+    const step = panelState.steps.find(function findStep(item) {
+      return item.id === payload.stepId;
+    });
+    if (step) {
+      handleLoadPreview(step).catch(function onPreviewError(error) {
+        console.error('[asset preview] failed:', error);
+      });
+    }
+  }
+}
+
+function getActiveTab() {
+  return new Promise(function resolveActiveTab(resolve) {
+    chrome.tabs.query({ active: true, currentWindow: true }, function onTabs(tabs) {
+      if (chrome.runtime.lastError || !Array.isArray(tabs) || tabs.length === 0) {
+        resolve(null);
+        return;
+      }
+
+      resolve(tabs[0] || null);
+    });
+  });
+}
+
+async function refreshSnapshot() {
+  const result = await sendPanelCommand(messages.COMMAND.SESSION_GET_SNAPSHOT, {});
+  if (result && result.ok && result.snapshot) {
+    mergeSnapshot(result.snapshot);
+  }
+}
+
+async function handleStartRecording() {
+  const activeTab = await getActiveTab();
+  if (!activeTab || typeof activeTab.id !== 'number') {
+    alert('未找到可录制页面，请先打开一个网页。');
     return;
   }
 
-  modeRadios.forEach((radio) => {
-    radio.checked = radio.value === recordingMode;
+  const shouldClear = panelState.steps.length > 0
+    ? confirm('检测到已有步骤，开始前是否清空当前会话步骤？')
+    : false;
+
+  setDocumentStatus('idle', '');
+
+  const result = await sendPanelCommand(messages.COMMAND.SESSION_START, {
+    tabId: activeTab.id,
+    mode: panelState.recordingMode,
+    clearExisting: shouldClear
   });
+
+  if (!result || result.ok === false) {
+    throw new Error(result && result.error ? result.error : 'start_failed');
+  }
+
+  if (result.snapshot) {
+    mergeSnapshot(result.snapshot);
+  } else {
+    await refreshSnapshot();
+  }
+}
+
+async function handleStopRecording() {
+  const result = await sendPanelCommand(messages.COMMAND.SESSION_STOP, {});
+  if (!result || result.ok === false) {
+    throw new Error(result && result.error ? result.error : 'stop_failed');
+  }
+
+  if (result.snapshot) {
+    mergeSnapshot(result.snapshot);
+  } else {
+    await refreshSnapshot();
+  }
+}
+
+async function handleModeChange(event) {
+  const mode = event && event.target ? event.target.value : 'auto';
+
+  const result = await sendPanelCommand(messages.COMMAND.SETTINGS_UPDATE, {
+    mode: mode
+  });
+
+  if (!result || result.ok === false) {
+    throw new Error(result && result.error ? result.error : 'mode_update_failed');
+  }
+
+  if (result.snapshot) {
+    mergeSnapshot(result.snapshot);
+  }
+}
+
+async function handleDeleteStep(step) {
+  if (!step || !step.id) {
+    return;
+  }
+
+  if (!confirm('确定删除该步骤吗？')) {
+    return;
+  }
+
+  const result = await sendPanelCommand(messages.COMMAND.STEP_DELETE, {
+    stepId: step.id
+  });
+
+  if (!result || result.ok === false) {
+    throw new Error(result && result.error ? result.error : 'delete_failed');
+  }
+
+  await refreshSnapshot();
+}
+
+async function handleLoadPreview(step) {
+  const assetId = step && step.preview && step.preview.assetId
+    ? step.preview.assetId
+    : step && step.capture && step.capture.primaryAssetId
+      ? step.capture.primaryAssetId
+      : null;
+
+  if (!step || !step.id || !assetId) {
+    return;
+  }
+
+  if (previewLoadState.has(step.id)) {
+    return;
+  }
+
+  previewLoadState.add(step.id);
+
+  panelState = {
+    ...panelState,
+    steps: updateStepPreview(panelState.steps, {
+      stepId: step.id,
+      status: 'loading'
+    })
+  };
+  renderAll();
+
+  try {
+    const result = await sendPanelCommand(messages.COMMAND.ASSET_GET_PREVIEW, {
+      assetId: assetId
+    });
+
+    if (!result || result.ok === false || !result.asset) {
+      throw new Error(result && result.error ? result.error : 'asset_preview_missing');
+    }
+
+    panelState = {
+      ...panelState,
+      steps: updateStepPreview(panelState.steps, {
+        stepId: step.id,
+        asset: result.asset
+      })
+    };
+  } catch (error) {
+    panelState = {
+      ...panelState,
+      steps: updateStepPreview(panelState.steps, {
+        stepId: step.id,
+        status: 'failed',
+        error: error && error.message ? error.message : 'asset_preview_failed'
+      })
+    };
+    throw error;
+  } finally {
+    previewLoadState.delete(step.id);
+    renderAll();
+  }
+}
+
+function ensureIdlePreviews() {
+  panelState.steps.forEach(function eachStep(step) {
+    if (!step || !step.preview || !step.preview.assetId) {
+      return;
+    }
+
+    if (step.preview.status !== 'idle') {
+      return;
+    }
+
+    handleLoadPreview(step).catch(function ignorePreviewError() {});
+  });
+}
+
+async function handleClearSteps() {
+  if (!Array.isArray(panelState.steps) || panelState.steps.length === 0) {
+    return;
+  }
+
+  if (!confirm('确定清空当前会话的全部步骤吗？')) {
+    return;
+  }
+
+  const steps = panelState.steps.slice();
+  for (const step of steps) {
+    const result = await sendPanelCommand(messages.COMMAND.STEP_DELETE, {
+      stepId: step.id
+    });
+
+    if (!result || result.ok === false) {
+      throw new Error(result && result.error ? result.error : 'clear_failed');
+    }
+  }
+
+  await refreshSnapshot();
+}
+
+async function handleExport(format, useAi) {
+  const sessionId = panelState.activeSessionId || (panelState.session && panelState.session.id);
+  if (!sessionId) {
+    alert('当前没有可导出的会话。');
+    return;
+  }
+
+  setDocumentStatus('building', '文档构建中...');
+
+  try {
+    const buildResult = await requestDocumentBuild(sessionId, format, useAi);
+    await downloadExportBundle(buildResult);
+
+    if (useAi) {
+      if (buildResult.ai && buildResult.ai.status === 'completed') {
+        setDocumentStatus('ready', 'AI 改写完成，文档已触发下载。');
+      } else if (buildResult.ai && buildResult.ai.status === 'fallback') {
+        setDocumentStatus('ready', 'AI 未配置或调用失败，已使用规则改写并触发下载。');
+      } else {
+        setDocumentStatus('ready', '文档已触发下载。');
+      }
+    } else {
+      setDocumentStatus('ready', '文档构建完成，已触发下载。');
+    }
+  } catch (error) {
+    setDocumentStatus('failed', '文档构建失败: ' + (error && error.message ? error.message : 'unknown_error'));
+    throw error;
+  }
 }
 
 function setupEventListeners() {
   if (startRecordBtn) {
-    startRecordBtn.addEventListener('click', startRecording);
+    startRecordBtn.addEventListener('click', function onStartClick() {
+      handleStartRecording().catch(function onStartError(error) {
+        console.error('[start] failed:', error);
+        alert('启动录制失败，请重试。');
+      });
+    });
   }
+
   if (stopRecordBtn) {
-    stopRecordBtn.addEventListener('click', stopRecording);
-  }
-  if (exportMarkdownBtn) {
-    exportMarkdownBtn.addEventListener('click', () => {
-      exportSteps('markdown');
+    stopRecordBtn.addEventListener('click', function onStopClick() {
+      handleStopRecording().catch(function onStopError(error) {
+        console.error('[stop] failed:', error);
+        alert('停止录制失败，请重试。');
+      });
     });
   }
-  if (exportHtmlBtn) {
-    exportHtmlBtn.addEventListener('click', () => {
-      exportSteps('html');
-    });
-  }
+
   if (clearStepsBtn) {
-    clearStepsBtn.addEventListener('click', clearSteps);
-  }
-  if (modeRadios) {
-    modeRadios.forEach((radio) => {
-      radio.addEventListener('change', handleModeChange);
-    });
-  }
-}
-
-function setupStorageListeners() {
-  chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== 'local') {
-      return;
-    }
-
-    const changedKeys = Object.keys(changes);
-    const shouldReload = changedKeys.some((key) => key.startsWith('recorder:'));
-    if (shouldReload) {
-      loadState();
-    }
-  });
-}
-
-function getActiveTab() {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: 'getActiveTab' }, (response) => {
-      if (chrome.runtime.lastError || !response) {
-        resolve(null);
-        return;
-      }
-      resolve(response.tab || null);
-    });
-  });
-}
-
-function startRecording() {
-  getActiveTab().then((activeTab) => {
-    if (!activeTab) {
-      alert('未找到可录制的标签页，请先打开一个网页。');
-      return;
-    }
-
-    const shouldClearSteps = steps.length > 0 && confirm(
-      '检测到已有步骤，是否清空后再开始录制？\n点击“确定”清空，点击“取消”保留。'
-    );
-
-    const startRecordingSession = () => {
-      chrome.runtime.sendMessage(
-        {
-          action: 'startRecording',
-          tabId: activeTab.id
-        },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            console.error('[popup startRecording] failed:', chrome.runtime.lastError);
-            alert('录制启动失败，请确认网页已完全加载后重试。');
-            return;
-          }
-          if (response && response.ok) {
-            isRecording = true;
-            updateUI();
-            
-            chrome.runtime.sendMessage({
-              action: 'setManualConfirmMode',
-              tabId: activeTab.id,
-              enabled: recordingMode === 'manual'
-            }, (setModeResponse) => {
-              if (chrome.runtime.lastError) {
-                console.error('[popup setManualConfirmMode] failed:', chrome.runtime.lastError);
-              }
-            });
-            
-            return;
-          }
-
-          console.error('[popup startRecording] background响应失败');
-          alert('录制启动失败，请确认网页已完全加载后重试。');
-        }
-      );
-    };
-
-    if (shouldClearSteps) {
-      chrome.runtime.sendMessage({ action: 'clearSteps' }, () => {
-        if (chrome.runtime.lastError) {
-          console.error('[clearSteps before start] failed:', chrome.runtime.lastError);
-        }
-        steps = [];
-        renderSteps();
-        startRecordingSession();
+    clearStepsBtn.addEventListener('click', function onClearClick() {
+      handleClearSteps().catch(function onClearError(error) {
+        console.error('[clear] failed:', error);
+        alert('清空失败，请重试。');
       });
-      return;
-    }
-
-    startRecordingSession();
-  });
-}
-
-function stopRecording() {
-  getActiveTab().then((activeTab) => {
-    chrome.runtime.sendMessage(
-      {
-        action: 'stopRecording',
-        tabId: activeTab ? activeTab.id : null
-      },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          console.error('[popup stopRecording] failed:', chrome.runtime.lastError);
-          return;
-        }
-        if (response && response.ok) {
-          isRecording = false;
-          updateUI();
-        }
-      }
-    );
-  });
-}
-
-function clearSteps() {
-  if (steps.length === 0) {
-    return;
-  }
-
-  if (!confirm('确定要清空所有步骤记录吗？')) {
-    return;
-  }
-
-  chrome.runtime.sendMessage({ action: 'clearSteps' }, (response) => {
-    if (chrome.runtime.lastError || !response || response.ok === false) {
-      console.error('[clearSteps] failed:', chrome.runtime.lastError || response);
-      return;
-    }
-
-    steps = [];
-    renderSteps();
-  });
-}
-
-function deleteStep(stepIndex) {
-  if (!Number.isInteger(stepIndex) || stepIndex < 0 || stepIndex >= steps.length) {
-    return;
-  }
-
-  if (!confirm('确定要删除这条步骤吗？')) {
-    return;
-  }
-
-  const step = steps[stepIndex];
-  chrome.runtime.sendMessage({ action: 'deleteStep', stepId: step.id }, (response) => {
-    if (chrome.runtime.lastError || !response || response.ok === false) {
-      console.error('[deleteStep] failed:', chrome.runtime.lastError || response);
-      return;
-    }
-
-    const nextSteps = steps.filter((_, index) => index !== stepIndex);
-    steps = nextSteps;
-    renderSteps();
-  });
-}
-
-function handleModeChange(event) {
-  recordingMode = event.target.value;
-  chrome.runtime.sendMessage({ action: 'updateRecordingMode', mode: recordingMode }, (response) => {
-    if (chrome.runtime.lastError || !response || response.ok === false) {
-      console.error('[handleModeChange] failed to update mode:', chrome.runtime.lastError || response);
-      return;
-    }
-
-    loadState();
-  });
-}
-
-function renderSteps() {
-  if (!stepsContainer) {
-    return;
-  }
-
-  if (stepsCount) {
-    stepsCount.textContent = steps.length > 0 ? `(${steps.length})` : '';
-  }
-
-  if (steps.length === 0) {
-    stepsContainer.innerHTML = '<p class="empty-message">暂无步骤记录</p>';
-    return;
-  }
-
-  stepsContainer.innerHTML = '';
-
-  steps.forEach((step, index) => {
-    const stepElement = document.createElement('div');
-    stepElement.className = 'step-item';
-
-    stepElement.innerHTML = `
-      <div class="step-number">${index + 1}</div>
-      <div class="step-content">
-        <div class="step-text">${escapeHtml(step.text || '点击元素')}</div>
-        <div class="step-selector">${escapeHtml(step.selector || '')}</div>
-      </div>
-      ${step.screenshot ? `<img class="step-screenshot" src="${step.screenshot}" alt="步骤截图">` : ''}
-    `;
-
-    const stepActions = document.createElement('div');
-    stepActions.className = 'step-actions';
-
-    const deleteButton = document.createElement('button');
-    deleteButton.type = 'button';
-    deleteButton.className = 'step-delete-btn';
-    deleteButton.title = '删除此步骤';
-    deleteButton.innerHTML = '<img src="icons/delete.svg" alt="删除" class="delete-icon">';
-    deleteButton.addEventListener('click', () => {
-      deleteStep(index);
     });
-
-    stepActions.appendChild(deleteButton);
-    stepElement.appendChild(stepActions);
-
-    stepsContainer.appendChild(stepElement);
-  });
-}
-
-async function exportSteps(format) {
-  if (steps.length === 0) {
-    alert('没有可导出的步骤');
-    return;
   }
 
-  const { stepsForDocument, imageFiles } = prepareExportAssets(steps);
-
-  let content = '';
-  let filename = '';
-  let mimeType = '';
-
-  if (format === 'markdown') {
-    content = generateMarkdown(stepsForDocument);
-    filename = '步骤指南.md';
-    mimeType = 'text/markdown;charset=utf-8';
-  } else if (format === 'html') {
-    content = generateHtml(stepsForDocument);
-    filename = '步骤指南.html';
-    mimeType = 'text/html;charset=utf-8';
-  } else {
-    return;
-  }
-
-  const folderName = buildExportFolderName();
-
-  try {
-    if (jszip) {
-      await downloadExportFilesWithZip({
-        folderName,
-        mainFile: {
-          filename,
-          blob: new Blob([content], { type: mimeType })
-        },
-        imageFiles
+  if (exportMarkdownBtn) {
+    exportMarkdownBtn.addEventListener('click', function onExportMarkdownClick() {
+      handleExport('markdown', false).catch(function onExportMarkdownError(error) {
+        console.error('[export markdown] failed:', error);
+        alert('导出失败，请重试。');
       });
-    } else {
-      await downloadExportFiles({
-        folderName,
-        mainFile: {
-          filename,
-          blob: new Blob([content], { type: mimeType })
-        },
-        imageFiles
-      });
-    }
-
-    alert(`导出完成：${filename} + ${imageFiles.length} 张图片`);
-  } catch (error) {
-    console.error('[exportSteps] 导出失败:', error);
-    alert('导出失败，请重试。');
-  }
-}
-
-function prepareExportAssets(sourceSteps) {
-  const stepsForDocument = sourceSteps.map((step) => ({ ...step }));
-  const imageFiles = [];
-  const usedImageFilenames = new Set();
-
-  stepsForDocument.forEach((step, index) => {
-    if (!isImageDataUrl(step.screenshot)) {
-      return;
-    }
-
-    const extension = getImageExtension(step.screenshot);
-    const imageFilename = buildExportImageFilename(step, index, extension, usedImageFilenames);
-    const relativePath = `images/${imageFilename}`;
-
-    imageFiles.push({
-      filename: relativePath,
-      blob: dataUrlToBlob(step.screenshot)
     });
+  }
 
-    step.screenshot = relativePath;
+  if (exportHtmlBtn) {
+    exportHtmlBtn.addEventListener('click', function onExportHtmlClick() {
+      handleExport('html', false).catch(function onExportHtmlError(error) {
+        console.error('[export html] failed:', error);
+        alert('导出失败，请重试。');
+      });
+    });
+  }
+
+  if (exportJsonBtn) {
+    exportJsonBtn.addEventListener('click', function onExportJsonClick() {
+      handleExport('json', false).catch(function onExportJsonError(error) {
+        console.error('[export json] failed:', error);
+        alert('导出失败，请重试。');
+      });
+    });
+  }
+
+  if (aiGenerateBtn) {
+    aiGenerateBtn.addEventListener('click', function onAiGenerateClick() {
+      handleExport('markdown', true).catch(function onAiError(error) {
+        console.error('[export ai] failed:', error);
+        alert('AI 文档生成失败，请检查配置后重试。');
+      });
+    });
+  }
+
+  modeRadios.forEach(function eachRadio(radio) {
+    radio.addEventListener('change', function onModeChange(event) {
+      handleModeChange(event).catch(function onModeError(error) {
+        console.error('[mode] failed:', error);
+        alert('模式切换失败，请重试。');
+      });
+    });
   });
-
-  return {
-    stepsForDocument,
-    imageFiles
-  };
-}
-
-function buildExportImageFilename(step, index, extension, usedImageFilenames) {
-  const rawTimestamp = typeof step.timestamp === 'string' ? step.timestamp : '';
-  const rawStepId = typeof step.id === 'string' ? step.id : '';
-
-  const timestampToken = sanitizeFilenameToken(rawTimestamp.replace(/[^0-9]/g, '')) || `${Date.now()}-${index + 1}`;
-  const stepIdToken = sanitizeFilenameToken(rawStepId) || `idx-${index + 1}`;
-  const safeExtension = sanitizeFilenameToken(extension) || 'png';
-
-  let imageFilename = `capture-${timestampToken}-${stepIdToken}.${safeExtension}`;
-  let suffix = 1;
-
-  while (usedImageFilenames.has(imageFilename)) {
-    imageFilename = `capture-${timestampToken}-${stepIdToken}-${suffix}.${safeExtension}`;
-    suffix += 1;
-  }
-
-  usedImageFilenames.add(imageFilename);
-  return imageFilename;
-}
-
-function sanitizeFilenameToken(value) {
-  return String(value || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+/, '')
-    .replace(/-+$/, '')
-    .slice(0, 64);
-}
-
-function isImageDataUrl(value) {
-  return typeof value === 'string' && value.startsWith('data:image/');
-}
-
-function getImageExtension(dataUrl) {
-  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,/.exec(dataUrl);
-  const mimeType = match ? match[1].toLowerCase() : 'image/png';
-
-  if (mimeType === 'image/jpeg') {
-    return 'jpg';
-  }
-  if (mimeType === 'image/svg+xml') {
-    return 'svg';
-  }
-  if (mimeType.includes('/')) {
-    return mimeType.split('/')[1].replace('x-icon', 'ico');
-  }
-
-  return 'png';
-}
-
-function dataUrlToBlob(dataUrl) {
-  const [header, base64] = dataUrl.split(',', 2);
-  const mimeMatch = /^data:(.*?);base64$/.exec(header || '');
-  const mimeType = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
-
-  const binary = atob(base64 || '');
-  const bytes = new Uint8Array(binary.length);
-
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-
-  return new Blob([bytes], { type: mimeType });
-}
-
-function buildExportFolderName() {
-  const now = new Date();
-  const pad = (value) => String(value).padStart(2, '0');
-
-  return `step-guide-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-}
-
-async function downloadExportFiles({ folderName, mainFile, imageFiles }) {
-  const useChromeDownloads = chrome.downloads && typeof chrome.downloads.download === 'function';
-
-  if (useChromeDownloads) {
-    await downloadBlobWithChrome(mainFile.blob, `${folderName}/${mainFile.filename}`);
-
-    for (const imageFile of imageFiles) {
-      const leafName = imageFile.filename.split('/').pop() || imageFile.filename;
-      await downloadBlobWithChrome(imageFile.blob, `${folderName}/${leafName}`);
-    }
-
-    return;
-  }
-
-  triggerBlobDownload(mainFile.blob, mainFile.filename);
-  for (const imageFile of imageFiles) {
-    const leafName = imageFile.filename.split('/').pop() || imageFile.filename;
-    triggerBlobDownload(imageFile.blob, leafName);
-  }
-}
-
-function downloadBlobWithChrome(blob, filename) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(blob);
-
-    chrome.downloads.download(
-      {
-        url,
-        filename,
-        saveAs: false,
-        conflictAction: 'uniquify'
-      },
-      (downloadId) => {
-        setTimeout(() => URL.revokeObjectURL(url), 10000);
-
-        if (chrome.runtime.lastError || !downloadId) {
-          reject(new Error(chrome.runtime.lastError ? chrome.runtime.lastError.message : 'download failed'));
-          return;
-        }
-
-        resolve(downloadId);
-      }
-    );
-  });
-}
-
-function triggerBlobDownload(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-async function downloadExportFilesWithZip({ folderName, mainFile, imageFiles }) {
-  const zip = new JSZip();
-
-  zip.file(mainFile.filename, mainFile.blob);
-
-  for (const imageFile of imageFiles) {
-    const leafName = imageFile.filename.split('/').pop() || imageFile.filename;
-    zip.file(`images/${leafName}`, imageFile.blob);
-  }
-
-  const content = await zip.generateAsync({ type: 'blob' });
-
-  const zipFilename = `${folderName}.zip`;
-  triggerBlobDownload(content, zipFilename);
-}
-
-function generateMarkdown(stepsForDocument) {
-  let markdown = '# 步骤指南\n\n';
-
-  stepsForDocument.forEach((step, index) => {
-    markdown += `## 步骤 ${index + 1}\n\n`;
-    markdown += `- 操作: ${step.type || 'click'}\n`;
-    markdown += `- 元素: ${step.text || '未知元素'}\n`;
-    markdown += `- 选择器: \`${step.selector || ''}\`\n`;
-
-    if (step.url) {
-      markdown += `- 页面: ${step.url}\n`;
-    }
-
-    if (step.screenshot) {
-      markdown += `- 截图:\n![步骤 ${index + 1}截图](${step.screenshot})\n`;
-    }
-
-    markdown += '\n';
-  });
-
-  return markdown;
-}
-
-function generateHtml(stepsForDocument) {
-  let html = `
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>步骤指南</title>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    body {
-      font-family: Arial, sans-serif;
-      line-height: 1.6;
-      color: #333;
-      background-color: #f5f5f5;
-      padding: 20px;
-    }
-    .container {
-      max-width: 800px;
-      margin: 0 auto;
-      background-color: #fff;
-      padding: 30px;
-      border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-    }
-    h1 {
-      color: #3b82f6;
-      margin-bottom: 30px;
-      text-align: center;
-    }
-    h2 {
-      color: #333;
-      margin: 20px 0 10px;
-      border-bottom: 1px solid #e5e7eb;
-      padding-bottom: 5px;
-    }
-    .step {
-      margin-bottom: 20px;
-      padding: 15px;
-      border: 1px solid #e5e7eb;
-      border-radius: 4px;
-      background-color: #f9fafb;
-    }
-    .step-details {
-      margin-top: 10px;
-    }
-    .step-details p {
-      margin-bottom: 5px;
-      word-break: break-word;
-    }
-    .selector {
-      font-family: monospace;
-      background-color: #f3f4f6;
-      padding: 2px 4px;
-      border-radius: 3px;
-      font-size: 14px;
-    }
-    .screenshot {
-      margin-top: 10px;
-      border-radius: 4px;
-      max-width: 100%;
-      height: auto;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>步骤指南</h1>
-  `;
-
-  stepsForDocument.forEach((step, index) => {
-    html += `
-    <div class="step">
-      <h2>步骤 ${index + 1}</h2>
-      <div class="step-details">
-        <p><strong>操作:</strong> ${escapeHtml(step.type || 'click')}</p>
-        <p><strong>元素:</strong> ${escapeHtml(step.text || '未知元素')}</p>
-        <p><strong>选择器:</strong> <span class="selector">${escapeHtml(step.selector || '')}</span></p>
-        ${step.url ? `<p><strong>页面:</strong> ${escapeHtml(step.url)}</p>` : ''}
-        ${step.screenshot ? `<img class="screenshot" src="${step.screenshot}" alt="步骤 ${index + 1}截图">` : ''}
-      </div>
-    </div>
-    `;
-  });
-
-  html += `
-  </div>
-</body>
-</html>
-  `;
-
-  return html;
 }
 
 function escapeHtml(value) {
-  return String(value)
+  return String(value || '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+function init() {
+  connectPanelPort();
+  onPanelEvent(handlePanelEventMessage);
+  setupEventListeners();
+  renderAll();
+
+  refreshSnapshot().catch(function onSnapshotError(error) {
+    console.error('[snapshot] failed:', error);
+  });
 }
 
 init();

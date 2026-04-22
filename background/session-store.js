@@ -1,46 +1,102 @@
-const RECORDER_SCHEMA_VERSION = 2;
-const STEP_STATUS = {
+const RECORDER_CONSTANTS = self.StepRecorderConstants || {};
+const RECORDER_SCHEMAS = self.StepRecorderSchemas || {};
+const RECORDER_SCHEMA_VERSION = RECORDER_CONSTANTS.SCHEMA_VERSION || 2;
+const STEP_STATUS = RECORDER_CONSTANTS.STEP_STATUS || {
   PENDING: 'pending',
   READY: 'ready',
   FAILED: 'failed'
 };
-const SESSION_STATUS = {
+const SESSION_STATUS = RECORDER_CONSTANTS.SESSION_STATUS || {
   RECORDING: 'recording',
   STOPPED: 'stopped'
 };
-const RECORDER_STORAGE_KEYS = {
+const COMMIT_STATUS = RECORDER_CONSTANTS.COMMIT_STATUS || {
+  STARTED: 'started',
+  ASSET_WRITTEN: 'asset_written',
+  STORAGE_COMMITTED: 'storage_committed'
+};
+const RECORDER_STORAGE_KEYS = RECORDER_CONSTANTS.STORAGE_KEYS || {
   META: 'recorder:meta',
   SETTINGS: 'recorder:settings',
   ACTIVE_SESSION_ID: 'recorder:activeSessionId',
   SESSION_INDEX: 'recorder:sessionIndex',
-  SESSION: (sessionId) => `recorder:session:${sessionId}`,
-  SESSION_STEPS: (sessionId) => `recorder:sessionSteps:${sessionId}`,
-  STEP: (stepId) => `recorder:step:${stepId}`,
-  ASSET_META: (assetId) => `recorder:assetMeta:${assetId}`
+  SESSION: function sessionKey(sessionId) {
+    return 'recorder:session:' + sessionId;
+  },
+  SESSION_STEPS: function sessionStepsKey(sessionId) {
+    return 'recorder:sessionSteps:' + sessionId;
+  },
+  STEP: function stepKey(stepId) {
+    return 'recorder:step:' + stepId;
+  },
+  ASSET_META: function assetMetaKey(assetId) {
+    return 'recorder:assetMeta:' + assetId;
+  },
+  PENDING_COMMIT: function pendingCommitKey(stepId) {
+    return 'recorder:pendingCommit:' + stepId;
+  }
 };
 
 const sessionWriteLocks = new Map();
 
 function getStorageLocal(keys) {
-  return new Promise((resolve) => {
+  return new Promise(function resolveStorage(resolve) {
     chrome.storage.local.get(keys, resolve);
   });
 }
 
 function setStorageLocal(payload) {
-  return new Promise((resolve) => {
+  return new Promise(function resolveStorage(resolve) {
     chrome.storage.local.set(payload, resolve);
   });
 }
 
 function removeStorageLocal(keys) {
-  return new Promise((resolve) => {
+  return new Promise(function resolveStorage(resolve) {
     chrome.storage.local.remove(keys, resolve);
   });
 }
 
 function createId(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  if (RECORDER_SCHEMAS && typeof RECORDER_SCHEMAS.createId === 'function') {
+    return RECORDER_SCHEMAS.createId(prefix);
+  }
+  return prefix + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+}
+
+function createSessionRecord(input) {
+  if (RECORDER_SCHEMAS && typeof RECORDER_SCHEMAS.createSessionRecord === 'function') {
+    return RECORDER_SCHEMAS.createSessionRecord(input);
+  }
+  return input;
+}
+
+function normalizeStepRecord(input) {
+  if (RECORDER_SCHEMAS && typeof RECORDER_SCHEMAS.normalizeStepRecord === 'function') {
+    return RECORDER_SCHEMAS.normalizeStepRecord(input);
+  }
+  return input;
+}
+
+function createActionDraft(input) {
+  if (RECORDER_SCHEMAS && typeof RECORDER_SCHEMAS.createActionDraft === 'function') {
+    return RECORDER_SCHEMAS.createActionDraft(input);
+  }
+  return input;
+}
+
+function createAssetMeta(input) {
+  if (RECORDER_SCHEMAS && typeof RECORDER_SCHEMAS.createAssetMeta === 'function') {
+    return RECORDER_SCHEMAS.createAssetMeta(input);
+  }
+  return input;
+}
+
+function createPendingCommitRecord(input) {
+  if (RECORDER_SCHEMAS && typeof RECORDER_SCHEMAS.createPendingCommitRecord === 'function') {
+    return RECORDER_SCHEMAS.createPendingCommitRecord(input);
+  }
+  return input;
 }
 
 async function getRecorderMeta() {
@@ -56,9 +112,15 @@ async function setRecorderMeta(meta) {
 
 async function getRecorderSettings() {
   const result = await getStorageLocal([RECORDER_STORAGE_KEYS.SETTINGS]);
+  const defaultAiSettings = RECORDER_CONSTANTS.DEFAULT_AI_SETTINGS || {};
   return {
     recordingMode: 'auto',
-    ...(result[RECORDER_STORAGE_KEYS.SETTINGS] || {})
+    ai: { ...defaultAiSettings },
+    ...(result[RECORDER_STORAGE_KEYS.SETTINGS] || {}),
+    ai: {
+      ...defaultAiSettings,
+      ...((result[RECORDER_STORAGE_KEYS.SETTINGS] || {}).ai || {})
+    }
   };
 }
 
@@ -66,7 +128,11 @@ async function saveRecorderSettings(partialSettings) {
   const current = await getRecorderSettings();
   const next = {
     ...current,
-    ...partialSettings
+    ...(partialSettings || {}),
+    ai: {
+      ...(current.ai || {}),
+      ...((partialSettings && partialSettings.ai) || {})
+    }
   };
 
   await setStorageLocal({
@@ -86,7 +152,8 @@ async function getSessionRecord(sessionId) {
   return result[key] || null;
 }
 
-async function setSessionRecord(session) {
+async function setSessionRecord(sessionInput) {
+  const session = createSessionRecord(sessionInput);
   await setStorageLocal({
     [RECORDER_STORAGE_KEYS.SESSION(session.id)]: session
   });
@@ -112,7 +179,7 @@ async function ensureSessionIndexed(sessionId) {
     return;
   }
 
-  await setSessionIndex([sessionId, ...sessionIndex]);
+  await setSessionIndex([sessionId].concat(sessionIndex));
 }
 
 async function setActiveSessionId(sessionId) {
@@ -126,31 +193,29 @@ async function getActiveSessionId() {
   return result[RECORDER_STORAGE_KEYS.ACTIVE_SESSION_ID] || null;
 }
 
-async function createSession(sessionInput = {}) {
-  const sessionId = sessionInput.id || createId('session');
+async function createSession(sessionInput) {
+  const input = sessionInput || {};
+  const sessionId = input.id || createId('session');
   const existing = await getSessionRecord(sessionId);
 
   if (existing) {
     await ensureSessionIndexed(sessionId);
-    if (sessionInput.setActive !== false) {
+    if (input.setActive !== false) {
       await setActiveSessionId(sessionId);
     }
     return existing;
   }
 
-  const now = new Date().toISOString();
-  const session = {
+  const session = createSessionRecord({
     id: sessionId,
-    schemaVersion: RECORDER_SCHEMA_VERSION,
-    status: sessionInput.status || SESSION_STATUS.RECORDING,
-    mode: sessionInput.mode || 'auto',
-    tabId: typeof sessionInput.tabId === 'number' ? sessionInput.tabId : null,
-    windowId: typeof sessionInput.windowId === 'number' ? sessionInput.windowId : null,
-    startedAt: sessionInput.startedAt || now,
-    endedAt: sessionInput.endedAt || null,
-    stepCount: typeof sessionInput.stepCount === 'number' ? sessionInput.stepCount : 0,
-    metadata: sessionInput.metadata || {}
-  };
+    status: input.status || SESSION_STATUS.RECORDING,
+    mode: input.mode || 'auto',
+    tabId: typeof input.tabId === 'number' ? input.tabId : null,
+    windowId: typeof input.windowId === 'number' ? input.windowId : null,
+    startedAt: input.startedAt,
+    endedAt: input.endedAt,
+    stepCount: typeof input.stepCount === 'number' ? input.stepCount : 0
+  });
 
   await setStorageLocal({
     [RECORDER_STORAGE_KEYS.SESSION(sessionId)]: session,
@@ -168,12 +233,20 @@ async function getActiveSession() {
 }
 
 async function getStepRecord(stepId) {
+  if (!stepId) {
+    return null;
+  }
+
   const key = RECORDER_STORAGE_KEYS.STEP(stepId);
   const result = await getStorageLocal([key]);
   return result[key] || null;
 }
 
 async function getSessionStepIds(sessionId) {
+  if (!sessionId) {
+    return [];
+  }
+
   const key = RECORDER_STORAGE_KEYS.SESSION_STEPS(sessionId);
   const result = await getStorageLocal([key]);
   return Array.isArray(result[key]) ? result[key] : [];
@@ -181,7 +254,7 @@ async function getSessionStepIds(sessionId) {
 
 async function setSessionStepIds(sessionId, stepIds) {
   await setStorageLocal({
-    [RECORDER_STORAGE_KEYS.SESSION_STEPS(sessionId)]: stepIds
+    [RECORDER_STORAGE_KEYS.SESSION_STEPS(sessionId)]: Array.isArray(stepIds) ? stepIds : []
   });
 }
 
@@ -191,112 +264,128 @@ async function updateSessionStepCount(sessionId, stepCount) {
     return null;
   }
 
-  const updated = {
+  const updated = createSessionRecord({
     ...session,
-    stepCount,
-    updatedAt: new Date().toISOString()
-  };
+    stepCount: stepCount,
+    endedAt: session.endedAt,
+    startedAt: session.startedAt
+  });
 
   await setSessionRecord(updated);
   return updated;
 }
 
 async function saveStep(stepInput) {
-  const stepId = stepInput.id || createId('step');
-  const sessionId = stepInput.sessionId;
-  const existing = await getStepRecord(stepId);
-  const stepIds = await getSessionStepIds(sessionId);
-  const now = new Date().toISOString();
-  const alreadyIndexed = stepIds.includes(stepId);
-  const seq = typeof stepInput.seq === 'number'
-    ? stepInput.seq
-    : existing && typeof existing.seq === 'number'
+  const normalized = normalizeStepRecord(stepInput);
+  const existing = await getStepRecord(normalized.id);
+  const stepIds = await getSessionStepIds(normalized.sessionId);
+  const alreadyIndexed = stepIds.includes(normalized.id);
+  const seq = typeof normalized.seq === 'number' && normalized.seq > 0
+    ? normalized.seq
+    : existing && typeof existing.seq === 'number' && existing.seq > 0
       ? existing.seq
       : stepIds.length + (alreadyIndexed ? 0 : 1);
-
-  const stepRecord = {
-    id: stepId,
-    sessionId,
-    seq,
-    status: stepInput.status || STEP_STATUS.READY,
-    actionType: stepInput.actionType || 'click',
-    page: {
-      url: stepInput.page && stepInput.page.url ? stepInput.page.url : (stepInput.url || ''),
-      title: stepInput.page && stepInput.page.title ? stepInput.page.title : (stepInput.title || '')
-    },
-    target: stepInput.target || {
-      selector: stepInput.selector || '',
-      text: stepInput.text || '',
-      tagName: ''
-    },
-    capture: {
-      primaryAssetId: stepInput.capture && stepInput.capture.primaryAssetId
-        ? stepInput.capture.primaryAssetId
-        : (stepInput.primaryAssetId || null),
-      beforeAssetId: stepInput.capture && stepInput.capture.beforeAssetId
-        ? stepInput.capture.beforeAssetId
-        : null,
-      afterAssetId: stepInput.capture && stepInput.capture.afterAssetId
-        ? stepInput.capture.afterAssetId
-        : null
-    },
-    createdAt: existing ? existing.createdAt : (stepInput.createdAt || now),
-    updatedAt: now,
-    type: stepInput.type || stepInput.actionType || 'click',
-    selector: stepInput.selector || (stepInput.target && stepInput.target.selector) || '',
-    text: stepInput.text || (stepInput.target && stepInput.target.text) || '',
-    rect: stepInput.rect || null,
-    tabId: typeof stepInput.tabId === 'number' ? stepInput.tabId : null,
-    url: stepInput.url || (stepInput.page && stepInput.page.url) || '',
-    title: stepInput.title || (stepInput.page && stepInput.page.title) || '',
-    timestamp: stepInput.timestamp || existing?.timestamp || now,
-    metadata: {
-      ...(existing && existing.metadata ? existing.metadata : {}),
-      ...(stepInput.metadata || {})
-    }
-  };
+  const nextStep = normalizeStepRecord({
+    ...normalized,
+    seq: seq,
+    createdAt: existing && existing.createdAt ? existing.createdAt : normalized.createdAt,
+    updatedAt: new Date().toISOString()
+  });
 
   const payload = {
-    [RECORDER_STORAGE_KEYS.STEP(stepId)]: stepRecord
+    [RECORDER_STORAGE_KEYS.STEP(nextStep.id)]: nextStep
   };
 
   if (!alreadyIndexed) {
-    payload[RECORDER_STORAGE_KEYS.SESSION_STEPS(sessionId)] = [...stepIds, stepId];
+    payload[RECORDER_STORAGE_KEYS.SESSION_STEPS(nextStep.sessionId)] = stepIds.concat([nextStep.id]);
   }
 
   await setStorageLocal(payload);
-  await updateSessionStepCount(sessionId, alreadyIndexed ? stepIds.length : stepIds.length + 1);
-
-  return stepRecord;
+  await updateSessionStepCount(nextStep.sessionId, alreadyIndexed ? stepIds.length : stepIds.length + 1);
+  return nextStep;
 }
 
 async function listSessionSteps(sessionId) {
   const stepIds = await getSessionStepIds(sessionId);
-  const steps = await Promise.all(stepIds.map((stepId) => getStepRecord(stepId)));
+  const steps = await Promise.all(stepIds.map(function mapStep(stepId) {
+    return getStepRecord(stepId);
+  }));
+
   return steps
     .filter(Boolean)
-    .sort((left, right) => (left.seq || 0) - (right.seq || 0));
+    .sort(function sortBySeq(left, right) {
+      return (left.seq || 0) - (right.seq || 0);
+    });
 }
 
-async function saveAssetMeta(assetMeta) {
+async function saveAssetMeta(assetInput) {
+  const assetMeta = createAssetMeta(assetInput);
   await setStorageLocal({
     [RECORDER_STORAGE_KEYS.ASSET_META(assetMeta.id)]: assetMeta
   });
+  return assetMeta;
 }
 
 async function getAssetMeta(assetId) {
+  if (!assetId) {
+    return null;
+  }
+
   const key = RECORDER_STORAGE_KEYS.ASSET_META(assetId);
   const result = await getStorageLocal([key]);
   return result[key] || null;
 }
 
 async function deleteAssetMeta(assetId) {
+  if (!assetId) {
+    return;
+  }
   await removeStorageLocal([RECORDER_STORAGE_KEYS.ASSET_META(assetId)]);
+}
+
+async function savePendingCommit(pendingInput) {
+  const pendingCommit = createPendingCommitRecord(pendingInput);
+  await setStorageLocal({
+    [RECORDER_STORAGE_KEYS.PENDING_COMMIT(pendingCommit.stepId)]: pendingCommit
+  });
+  return pendingCommit;
+}
+
+async function getPendingCommit(stepId) {
+  if (!stepId) {
+    return null;
+  }
+
+  const key = RECORDER_STORAGE_KEYS.PENDING_COMMIT(stepId);
+  const result = await getStorageLocal([key]);
+  return result[key] || null;
+}
+
+async function deletePendingCommit(stepId) {
+  if (!stepId) {
+    return;
+  }
+
+  await removeStorageLocal([RECORDER_STORAGE_KEYS.PENDING_COMMIT(stepId)]);
+}
+
+async function listPendingCommits() {
+  const all = await getStorageLocal(null);
+  const commits = [];
+
+  Object.keys(all || {}).forEach(function eachKey(key) {
+    if (key.startsWith('recorder:pendingCommit:') && all[key]) {
+      commits.push(all[key]);
+    }
+  });
+
+  return commits;
 }
 
 async function deleteStep(stepId) {
   const step = await getStepRecord(stepId);
   if (!step) {
+    await deletePendingCommit(stepId);
     return { ok: true, deleted: false };
   }
 
@@ -306,13 +395,18 @@ async function deleteStep(stepId) {
   }
 
   const stepIds = await getSessionStepIds(step.sessionId);
-  const nextStepIds = stepIds.filter((currentStepId) => currentStepId !== stepId);
+  const nextStepIds = stepIds.filter(function filterStepId(currentStepId) {
+    return currentStepId !== stepId;
+  });
 
-  await removeStorageLocal([RECORDER_STORAGE_KEYS.STEP(stepId)]);
+  await removeStorageLocal([
+    RECORDER_STORAGE_KEYS.STEP(stepId),
+    RECORDER_STORAGE_KEYS.PENDING_COMMIT(stepId)
+  ]);
   await setSessionStepIds(step.sessionId, nextStepIds);
   await updateSessionStepCount(step.sessionId, nextStepIds.length);
 
-  return { ok: true, deleted: true, stepId };
+  return { ok: true, deleted: true, stepId: stepId };
 }
 
 async function clearActiveSessionSteps() {
@@ -356,14 +450,12 @@ async function startRecordingSession(tabId, windowId) {
     });
   }
 
-  const session = await createSession({
+  return createSession({
     status: SESSION_STATUS.RECORDING,
     mode: settings.recordingMode || 'auto',
-    tabId,
+    tabId: tabId,
     windowId: typeof windowId === 'number' ? windowId : null
   });
-
-  return session;
 }
 
 async function stopRecordingSession() {
@@ -372,11 +464,11 @@ async function stopRecordingSession() {
     return null;
   }
 
-  const stoppedSession = {
+  const stoppedSession = createSessionRecord({
     ...activeSession,
     status: SESSION_STATUS.STOPPED,
     endedAt: new Date().toISOString()
-  };
+  });
 
   await setSessionRecord(stoppedSession);
   return stoppedSession;
@@ -389,19 +481,121 @@ async function updateRecordingMode(mode) {
   if (activeSession && activeSession.status === SESSION_STATUS.RECORDING) {
     await setSessionRecord({
       ...activeSession,
-      mode
+      mode: mode
     });
   }
 
   return settings;
 }
 
+function toActionDraft(stepInput, senderContext) {
+  if (stepInput && stepInput.draft) {
+    return createActionDraft(stepInput.draft);
+  }
+
+  return createActionDraft({
+    actionId: stepInput && stepInput.id ? String(stepInput.id) : createId('action'),
+    actionType: stepInput && stepInput.actionType ? String(stepInput.actionType) : 'click',
+    page: {
+      url: senderContext && senderContext.url ? senderContext.url : '',
+      title: senderContext && senderContext.title ? senderContext.title : ''
+    },
+    target: stepInput && stepInput.target ? stepInput.target : null,
+    capture: {
+      strategy: 'before',
+      primaryImageDataUrl: stepInput && stepInput.screenshot ? String(stepInput.screenshot) : null,
+      annotationRect: stepInput && stepInput.rect ? stepInput.rect : null
+    },
+    meta: {
+      manualConfirmed: false,
+      capturedAt: new Date().toISOString()
+    }
+  });
+}
+
+async function finalizePendingCommit(pendingCommit) {
+  const activeSession = await getSessionRecord(pendingCommit.sessionId);
+  if (!activeSession) {
+    throw new Error('session_not_found');
+  }
+
+  const nextStep = normalizeStepRecord({
+    id: pendingCommit.stepId,
+    sessionId: pendingCommit.sessionId,
+    status: STEP_STATUS.READY,
+    actionType: pendingCommit.draft.actionType,
+    page: pendingCommit.draft.page,
+    target: pendingCommit.draft.target,
+    capture: {
+      primaryAssetId: pendingCommit.assetMeta ? pendingCommit.assetMeta.id : null,
+      beforeAssetId: null,
+      afterAssetId: null
+    },
+    createdAt: pendingCommit.draft.meta.capturedAt,
+    updatedAt: new Date().toISOString()
+  });
+
+  const step = await saveStep(nextStep);
+  await deletePendingCommit(pendingCommit.stepId);
+  return step;
+}
+
+async function recoverPendingCommits() {
+  const pendingCommits = await listPendingCommits();
+  const recovered = [];
+
+  for (const pending of pendingCommits) {
+    const record = createPendingCommitRecord(pending);
+
+    try {
+      if (record.status === COMMIT_STATUS.STARTED && record.draft && record.draft.capture && record.draft.capture.primaryImageDataUrl && !record.assetMeta) {
+        const assetMeta = await putImageAsset({
+          id: createId('asset'),
+          sessionId: record.sessionId,
+          stepId: record.stepId,
+          kind: 'primary',
+          mimeType: 'image/png',
+          dataUrl: record.draft.capture.primaryImageDataUrl
+        });
+
+        record.assetMeta = createAssetMeta(assetMeta);
+        record.status = COMMIT_STATUS.ASSET_WRITTEN;
+        record.updatedAt = new Date().toISOString();
+        await savePendingCommit(record);
+      }
+
+      if (record.assetMeta && record.status === COMMIT_STATUS.ASSET_WRITTEN) {
+        const existingAssetMeta = await getAssetMeta(record.assetMeta.id);
+        if (!existingAssetMeta) {
+          await saveAssetMeta(record.assetMeta);
+        }
+      }
+
+      const step = await finalizePendingCommit(record);
+      recovered.push({ stepId: record.stepId, recovered: true, step: step });
+    } catch (error) {
+      console.error('[session-store] recover pending commit failed:', error);
+      await savePendingCommit({
+        ...record,
+        error: error && error.message ? error.message : 'recover_failed',
+        updatedAt: new Date().toISOString()
+      });
+    }
+  }
+
+  return recovered;
+}
+
 async function commitCapturedStep(stepInput, senderContext) {
-  const stepId = stepInput.id || createId('step');
-  const lockKey = `${stepId}:${senderContext.tabId || 'no-tab'}`;
+  const normalizedContext = senderContext || {};
+  const actionDraft = toActionDraft(stepInput, normalizedContext);
+  const stepId = stepInput && stepInput.stepId
+    ? String(stepInput.stepId)
+    : String(actionDraft.actionId || createId('step'));
+  const lockKey = stepId + ':' + (normalizedContext.tabId || 'no-tab');
 
   if (sessionWriteLocks.has(lockKey)) {
-    return { ok: true, stepId, deduplicated: true };
+    return { ok: true, stepId: stepId, deduplicated: true };
   }
 
   sessionWriteLocks.set(lockKey, true);
@@ -412,81 +606,127 @@ async function commitCapturedStep(stepInput, senderContext) {
       return { ok: false, error: 'not_recording' };
     }
 
-    if (typeof senderContext.tabId === 'number' && typeof activeSession.tabId === 'number' && senderContext.tabId !== activeSession.tabId) {
+    const payloadSessionId = stepInput && stepInput.sessionId ? String(stepInput.sessionId) : activeSession.id;
+    if (payloadSessionId !== activeSession.id) {
+      return { ok: false, error: 'session_mismatch' };
+    }
+
+    if (
+      typeof normalizedContext.tabId === 'number' &&
+      typeof activeSession.tabId === 'number' &&
+      normalizedContext.tabId !== activeSession.tabId
+    ) {
       return { ok: false, error: 'tab_mismatch' };
     }
 
     const existing = await getStepRecord(stepId);
     if (existing) {
-      return { ok: true, stepId, deduplicated: true };
+      return { ok: true, stepId: stepId, deduplicated: true };
     }
 
-    const pendingStep = await saveStep({
-      id: stepId,
-      sessionId: activeSession.id,
-      status: STEP_STATUS.PENDING,
-      actionType: stepInput.actionType || stepInput.type || 'click',
-      type: stepInput.type || stepInput.actionType || 'click',
-      target: stepInput.target || {
-        selector: stepInput.selector || '',
-        text: stepInput.text || '',
-        tagName: ''
-      },
-      selector: stepInput.selector || (stepInput.target && stepInput.target.selector) || '',
-      text: stepInput.text || (stepInput.target && stepInput.target.text) || '',
-      rect: stepInput.rect || null,
-      tabId: senderContext.tabId,
-      url: senderContext.url || '',
-      title: senderContext.title || '',
-      page: {
-        url: senderContext.url || '',
-        title: senderContext.title || ''
-      },
-      timestamp: new Date().toISOString(),
-      capture: {
-        primaryAssetId: null,
-        beforeAssetId: null,
-        afterAssetId: null
-      }
-    });
+    const primaryImageDataUrl = actionDraft.capture && actionDraft.capture.primaryImageDataUrl
+      ? actionDraft.capture.primaryImageDataUrl
+      : null;
 
-    try {
+    let pendingCommit = await getPendingCommit(stepId);
+    if (!pendingCommit) {
+      pendingCommit = await savePendingCommit({
+        stepId: stepId,
+        sessionId: activeSession.id,
+        status: COMMIT_STATUS.STARTED,
+        draft: actionDraft,
+        assetMeta: null,
+        startedAt: actionDraft.meta && actionDraft.meta.capturedAt ? actionDraft.meta.capturedAt : new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    if (primaryImageDataUrl && !pendingCommit.assetMeta) {
       let assetMeta = null;
-      if (stepInput.screenshot) {
+      try {
         assetMeta = await putImageAsset({
           id: createId('asset'),
           sessionId: activeSession.id,
-          stepId,
+          stepId: stepId,
           kind: 'primary',
           mimeType: 'image/png',
-          dataUrl: stepInput.screenshot
+          dataUrl: primaryImageDataUrl
         });
-        await saveAssetMeta(assetMeta);
+      } catch (error) {
+        await savePendingCommit({
+          ...pendingCommit,
+          error: error && error.message ? error.message : 'asset_write_failed',
+          updatedAt: new Date().toISOString()
+        });
+        return { ok: false, error: 'asset_write_failed', stepId: stepId };
       }
 
-      const readyStep = await saveStep({
-        ...pendingStep,
-        status: STEP_STATUS.READY,
+      pendingCommit = await savePendingCommit({
+        ...pendingCommit,
+        status: COMMIT_STATUS.ASSET_WRITTEN,
+        assetMeta: createAssetMeta(assetMeta),
+        updatedAt: new Date().toISOString(),
+        error: null
+      });
+    }
+
+    if (pendingCommit.assetMeta && !await getAssetMeta(pendingCommit.assetMeta.id)) {
+      await saveAssetMeta(pendingCommit.assetMeta);
+    }
+
+    const readyStep = await finalizePendingCommit({
+      ...pendingCommit,
+      status: COMMIT_STATUS.STORAGE_COMMITTED,
+      updatedAt: new Date().toISOString()
+    });
+
+    return { ok: true, stepId: stepId, step: readyStep };
+  } catch (error) {
+    console.error('[session-store] commitCapturedStep failed:', error);
+    const pendingCommit = await getPendingCommit(stepId);
+
+    if (pendingCommit) {
+      await savePendingCommit({
+        ...pendingCommit,
+        error: error && error.message ? error.message : 'commit_failed',
+        updatedAt: new Date().toISOString()
+      });
+
+      return {
+        ok: false,
+        error: error && error.message ? error.message : 'commit_failed',
+        stepId: stepId
+      };
+    }
+
+    try {
+      const failedStep = normalizeStepRecord({
+        id: stepId,
+        sessionId: (await getActiveSessionId()) || '',
+        status: STEP_STATUS.FAILED,
+        actionType: actionDraft.actionType,
+        page: actionDraft.page,
+        target: actionDraft.target,
         capture: {
-          primaryAssetId: assetMeta ? assetMeta.id : null,
+          primaryAssetId: null,
           beforeAssetId: null,
           afterAssetId: null
         },
-        primaryAssetId: assetMeta ? assetMeta.id : null
+        createdAt: actionDraft.meta.capturedAt,
+        updatedAt: new Date().toISOString(),
+        error: error && error.message ? error.message : 'commit_failed'
       });
 
-      return { ok: true, stepId, step: readyStep };
-    } catch (error) {
-      await saveStep({
-        ...pendingStep,
-        status: STEP_STATUS.FAILED,
-        metadata: {
-          ...(pendingStep.metadata || {}),
-          error: error && error.message ? error.message : 'asset_write_failed'
-        }
-      });
-      return { ok: false, error: 'asset_write_failed', stepId };
+      await saveStep(failedStep);
+    } catch (saveError) {
+      console.error('[session-store] failed to persist failed step:', saveError);
     }
+
+    return {
+      ok: false,
+      error: error && error.message ? error.message : 'commit_failed',
+      stepId: stepId
+    };
   } finally {
     sessionWriteLocks.delete(lockKey);
   }

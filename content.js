@@ -1,1064 +1,541 @@
-﻿let isRecording = false;
-let isManualConfirmMode = false;
-let overlay = null;
-let pendingManualAction = null;
-let isReplayingClick = false;
-let runtimeMessageListener = null;
-const RECORDER_STYLE_ID = 'step-recorder-content-styles';
-const RECORDER_RUNTIME_KEY = '__stepRecorderRuntime__';
-const NATIVE_CAPTURE_RETRIES = 2;
-const NATIVE_CAPTURE_RETRY_DELAY_MS = 80;
-const STRONG_INTERACTIVE_SELECTOR = 'a,button,input,textarea,select,option,[role="button"],[role="link"],[contenteditable="true"]';
-const CARD_LIKE_PATTERN = /(card|item|panel|tile|list|row|cell|module|block|box|content)/i;
-const BUTTON_LIKE_PATTERN = /(btn|button)/i;
-const HIGHLIGHT_THEME = {
-  stroke: 'rgba(249, 115, 22, 0.55)',
-  fill: 'rgba(249, 115, 22, 0.14)',
-  glowNear: 'rgba(249, 115, 22, 0.25)',
-  glowFar: 'rgba(249, 115, 22, 0.12)',
-  center: 'rgba(249, 115, 22, 0.9)'
-};
+﻿(function initContentRuntime(global) {
+  const messages = self.StepRecorderMessages;
+  const RECORDER_STYLE_ID = 'step-recorder-content-styles';
+  const RECORDER_RUNTIME_KEY = '__stepRecorderRuntimeV2__';
+  const STRONG_INTERACTIVE_SELECTOR = 'a,button,input,textarea,select,option,[role="button"],[role="link"],[contenteditable="true"]';
+  const CARD_LIKE_PATTERN = /(card|item|panel|tile|list|row|cell|module|block|box|content)/i;
+  const BUTTON_LIKE_PATTERN = /(btn|button)/i;
 
-function init() {
-  registerRuntimeInstance();
-  ensureRecorderStyles();
-  createOverlay();
+  function registerRuntimeInstance() {
+    const existing = window[RECORDER_RUNTIME_KEY];
+    if (existing && typeof existing.cleanup === 'function') {
+      try {
+        existing.cleanup();
+      } catch (error) {
+        console.warn('[runtime] cleanup previous instance failed:', error);
+      }
+    }
 
-  runtimeMessageListener = (message, sender, sendResponse) => {
-    if (message.action === 'startRecording') {
-      startRecording();
-      sendResponse({ ok: true });
+    window[RECORDER_RUNTIME_KEY] = {
+      cleanup: cleanupRuntimeInstance
+    };
+  }
+
+  function cleanupRuntimeInstance() {
+    stopRuntime();
+
+    const state = getRuntimeState();
+    if (state.runtimeMessageListener && chrome.runtime && chrome.runtime.onMessage) {
+      try {
+        chrome.runtime.onMessage.removeListener(state.runtimeMessageListener);
+      } catch (error) {
+        console.warn('[runtime] remove listener failed:', error);
+      }
+    }
+
+    setRuntimeState({
+      runtimeMessageListener: null
+    });
+
+    const currentState = getRuntimeState();
+    if (currentState.overlay && currentState.overlay.parentNode) {
+      currentState.overlay.parentNode.removeChild(currentState.overlay);
+    }
+
+    setRuntimeState({ overlay: null });
+
+    if (window[RECORDER_RUNTIME_KEY] && window[RECORDER_RUNTIME_KEY].cleanup === cleanupRuntimeInstance) {
+      delete window[RECORDER_RUNTIME_KEY];
+    }
+  }
+
+  function ensureRecorderStyles() {
+    if (document.getElementById(RECORDER_STYLE_ID)) {
+      return;
+    }
+
+    const style = document.createElement('style');
+    style.id = RECORDER_STYLE_ID;
+    style.textContent = [
+      '.recording-overlay{position:fixed;inset:0;pointer-events:none;z-index:2147483646;}',
+      '.highlight-element{position:absolute;border-radius:12px;pointer-events:none;box-shadow:0 0 0 1.5px rgba(249,115,22,0.4),0 0 12px 4px rgba(249,115,22,0.18),0 0 24px 8px rgba(249,115,22,0.08);animation:step-recorder-pulse 1.8s ease-in-out infinite;}',
+      '.confirm-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);}',
+      '.confirm-overlay-content{background:#e8ecf1;padding:24px 32px;border-radius:20px;max-width:400px;width:min(90vw,400px);box-shadow:8px 8px 16px rgba(163,177,198,0.7),-8px -8px 16px rgba(255,255,255,0.9),0 0 0 1px rgba(249,115,22,0.2);text-align:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}',
+      '.confirm-overlay-text{font-size:15px;color:#4a5568;margin-bottom:24px;line-height:1.6;word-break:break-word;}',
+      '.confirm-overlay-actions{display:flex;gap:16px;justify-content:center;}',
+      '.confirm-btn{padding:10px 24px;border-radius:14px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:transform 0.15s ease;}',
+      '.confirm-save{background:linear-gradient(145deg,#fb923c,#f97316);color:#fff;box-shadow:4px 4px 10px rgba(249,115,22,0.28);}',
+      '.confirm-cancel{background:#fff;color:#475569;box-shadow:4px 4px 10px rgba(148,163,184,0.2);}',
+      '.confirm-btn:hover{transform:translateY(-1px);}',
+      '.confirm-btn:active{transform:translateY(0);}',
+      '@keyframes step-recorder-pulse{0%,100%{box-shadow:0 0 0 1.5px rgba(249,115,22,0.32),0 0 10px 3px rgba(249,115,22,0.14),0 0 20px 6px rgba(249,115,22,0.08);}50%{box-shadow:0 0 0 2px rgba(249,115,22,0.48),0 0 18px 6px rgba(249,115,22,0.24),0 0 32px 10px rgba(249,115,22,0.12);}}'
+    ].join('');
+
+    document.documentElement.appendChild(style);
+  }
+
+  function createOverlay() {
+    const state = getRuntimeState();
+    if (state.overlay) {
+      return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'recording-overlay';
+    overlay.setAttribute('data-step-recorder-ui', 'true');
+    document.documentElement.appendChild(overlay);
+
+    setRuntimeState({ overlay: overlay });
+  }
+
+  function clearHighlights() {
+    const state = getRuntimeState();
+    if (!state.overlay) {
+      return;
+    }
+
+    while (state.overlay.firstChild) {
+      state.overlay.removeChild(state.overlay.firstChild);
+    }
+  }
+
+  function highlightElement(element) {
+    clearHighlights();
+
+    const state = getRuntimeState();
+    if (!state.overlay || !(element instanceof Element)) {
+      return null;
+    }
+
+    const rect = element.getBoundingClientRect();
+    const highlight = document.createElement('div');
+    highlight.className = 'highlight-element';
+    highlight.style.top = rect.top + 'px';
+    highlight.style.left = rect.left + 'px';
+    highlight.style.width = rect.width + 'px';
+    highlight.style.height = rect.height + 'px';
+
+    state.overlay.appendChild(highlight);
+
+    return {
+      left: Math.round(rect.left),
+      top: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      scrollX: window.scrollX,
+      scrollY: window.scrollY
+    };
+  }
+
+  function isRecorderUiElement(element) {
+    return Boolean(element && element.closest('[data-step-recorder-ui="true"]'));
+  }
+
+  function containsPoint(rect, x, y) {
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }
+
+  function hasClickableContainerHint(element) {
+    if (!(element instanceof Element)) {
       return false;
     }
 
-    if (message.action === 'stopRecording') {
-      stopRecording();
-      sendResponse({ ok: true });
+    if (element.hasAttribute('onclick') || element.hasAttribute('data-click') || element.hasAttribute('data-action')) {
+      return true;
+    }
+
+    const style = window.getComputedStyle(element);
+    if (style.cursor === 'pointer') {
+      return true;
+    }
+
+    const role = element.getAttribute('role');
+    return role === 'button' || role === 'link';
+  }
+
+  function isButtonLikeElement(element) {
+    const className = typeof element.className === 'string' ? element.className : '';
+    const id = element.id || '';
+    const hint = className + ' ' + id;
+
+    if (!BUTTON_LIKE_PATTERN.test(hint)) {
       return false;
     }
 
-    if (message.action === 'setManualConfirmMode') {
-      setManualConfirmMode(message.enabled);
-      sendResponse({ ok: true });
-      return false;
+    if (hasClickableContainerHint(element)) {
+      return true;
     }
 
-    if (message.action === 'confirmStep') {
-      handleConfirmStep(message.stepId, message.save);
-      sendResponse({ ok: true });
-      return false;
+    return typeof element.tabIndex === 'number' && element.tabIndex >= 0;
+  }
+
+  function isCardLikeElement(element) {
+    const className = typeof element.className === 'string' ? element.className : '';
+    const id = element.id || '';
+    const role = element.getAttribute('role') || '';
+    const dataType = element.getAttribute('data-type') || '';
+    const hintText = (className + ' ' + id + ' ' + role + ' ' + dataType).toLowerCase();
+
+    if (CARD_LIKE_PATTERN.test(hintText)) {
+      return true;
     }
 
-    return false;
-  };
+    const rect = element.getBoundingClientRect();
+    return rect.width > 140 && rect.height > 70 && element.childElementCount >= 2;
+  }
 
-  chrome.runtime.onMessage.addListener(runtimeMessageListener);
+  function getInteractiveAncestor(element) {
+    const strongAncestor = element.closest(STRONG_INTERACTIVE_SELECTOR);
+    if (strongAncestor) {
+      return strongAncestor;
+    }
 
-  document.addEventListener('keydown', handleKeyDown);
-}
+    let current = element;
+    let depth = 0;
+    while (current && current !== document.body && depth < 6) {
+      if (isButtonLikeElement(current)) {
+        return current;
+      }
+      current = current.parentElement;
+      depth += 1;
+    }
 
-function registerRuntimeInstance() {
-  const existingRuntime = window[RECORDER_RUNTIME_KEY];
-  if (existingRuntime && typeof existingRuntime.cleanup === 'function') {
+    return null;
+  }
+
+  function resolveClickTarget(element, event) {
+    const interactiveAncestor = getInteractiveAncestor(element);
+    if (interactiveAncestor) {
+      return interactiveAncestor;
+    }
+
+    const originRect = element.getBoundingClientRect();
+    const originArea = Math.max(originRect.width * originRect.height, 1);
+    const viewportArea = Math.max(window.innerWidth * window.innerHeight, 1);
+    const clickX = event.clientX;
+    const clickY = event.clientY;
+
+    let bestElement = element;
+    let bestScore = 0;
+    let current = element.parentElement;
+    let depth = 0;
+
+    while (current && current !== document.body && depth < 8) {
+      const rect = current.getBoundingClientRect();
+      const area = rect.width * rect.height;
+
+      if (area >= 1 && containsPoint(rect, clickX, clickY)) {
+        const growth = area / originArea;
+        const areaRatio = area / viewportArea;
+        const cardLike = isCardLikeElement(current);
+        const clickableContainer = hasClickableContainerHint(current);
+
+        let score = 0;
+        if (cardLike) {
+          score += 3;
+        }
+        if (clickableContainer) {
+          score += 2;
+        }
+        if (growth > 1.4) {
+          score += Math.min(3, Math.log2(growth));
+        }
+        if (areaRatio > 0.55) {
+          score -= 4;
+        } else if (areaRatio > 0.35) {
+          score -= 2;
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestElement = current;
+        }
+      }
+
+      current = current.parentElement;
+      depth += 1;
+    }
+
+    return bestElement;
+  }
+
+  function buildPendingManualAction(rawTarget, resolvedTarget, event) {
+    return {
+      rawTarget: rawTarget,
+      resolvedTarget: resolvedTarget,
+      mouseEventInit: {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        detail: typeof event.detail === 'number' ? event.detail : 1,
+        screenX: event.screenX,
+        screenY: event.screenY,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        metaKey: event.metaKey,
+        button: event.button,
+        buttons: event.buttons
+      }
+    };
+  }
+
+  function getReplayTarget(action) {
+    if (action.rawTarget instanceof Element && action.rawTarget.isConnected) {
+      return action.rawTarget;
+    }
+
+    if (action.resolvedTarget instanceof Element && action.resolvedTarget.isConnected) {
+      return action.resolvedTarget;
+    }
+
+    return null;
+  }
+
+  function dispatchReplayEvent(target, type, mouseEventInit, EventCtor) {
+    if (typeof EventCtor !== 'function') {
+      return;
+    }
+
+    const baseInit = Object.assign({}, mouseEventInit, { view: window });
+    const isPointerEvent = typeof PointerEvent === 'function' && EventCtor === PointerEvent;
+
+    if (isPointerEvent) {
+      target.dispatchEvent(new PointerEvent(type, Object.assign({}, baseInit, {
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true
+      })));
+      return;
+    }
+
+    target.dispatchEvent(new EventCtor(type, baseInit));
+  }
+
+  function replayPendingManualAction() {
+    const state = getRuntimeState();
+    const action = state.pendingManualAction;
+
+    setRuntimeState({ pendingManualAction: null });
+
+    if (!action) {
+      return;
+    }
+
+    const replayTarget = getReplayTarget(action);
+    if (!replayTarget) {
+      return;
+    }
+
+    setRuntimeState({ isReplayingClick: true });
+
     try {
-      existingRuntime.cleanup();
-    } catch (error) {
-      console.warn('[runtime] failed to cleanup previous recorder instance:', error);
+      if (replayTarget instanceof HTMLElement && typeof replayTarget.focus === 'function') {
+        replayTarget.focus({ preventScroll: true });
+      }
+
+      const PointerEventCtor = typeof PointerEvent === 'function' ? PointerEvent : null;
+      dispatchReplayEvent(replayTarget, 'pointerdown', action.mouseEventInit, PointerEventCtor);
+      dispatchReplayEvent(replayTarget, 'mousedown', action.mouseEventInit, MouseEvent);
+      dispatchReplayEvent(replayTarget, 'pointerup', action.mouseEventInit, PointerEventCtor);
+      dispatchReplayEvent(replayTarget, 'mouseup', action.mouseEventInit, MouseEvent);
+
+      if (replayTarget instanceof HTMLElement && typeof replayTarget.click === 'function') {
+        replayTarget.click();
+      } else {
+        replayTarget.dispatchEvent(new MouseEvent('click', Object.assign({}, action.mouseEventInit, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          view: window
+        })));
+      }
+    } finally {
+      setTimeout(function resetReplay() {
+        setRuntimeState({ isReplayingClick: false });
+      }, 0);
     }
   }
 
-  window[RECORDER_RUNTIME_KEY] = {
-    cleanup: cleanupRuntimeInstance
-  };
-}
+  async function captureAndCommit(targetElement, highlightRect, manualConfirmed) {
+    const state = getRuntimeState();
+    const screenshot = await captureAnnotatedScreenshot(highlightRect);
 
-function cleanupRuntimeInstance() {
-  stopRecording();
-  document.removeEventListener('keydown', handleKeyDown);
+    const draft = buildActionDraft({
+      actionType: 'click',
+      targetElement: targetElement,
+      annotationRect: highlightRect,
+      primaryImageDataUrl: screenshot,
+      manualConfirmed: manualConfirmed
+    });
 
-  if (runtimeMessageListener && chrome.runtime && chrome.runtime.onMessage) {
-    try {
-      chrome.runtime.onMessage.removeListener(runtimeMessageListener);
-    } catch (error) {
-      console.warn('[runtime] failed to remove message listener:', error);
+    const result = await commitCapturedStep(state.sessionId, draft);
+    if (!result || result.ok === false) {
+      await reportRuntimeError({
+        stage: 'commitCapturedStep',
+        error: result && result.error ? result.error : 'commit_failed'
+      });
+      return false;
     }
+
+    return true;
   }
 
-  runtimeMessageListener = null;
-  removeConfirmOverlay();
-  clearHighlights();
+  async function handleClick(event) {
+    const state = getRuntimeState();
 
-  if (overlay && overlay.parentNode) {
-    overlay.parentNode.removeChild(overlay);
-  }
+    if (!state.isRecording || state.isReplayingClick) {
+      return;
+    }
 
-  overlay = null;
+    const rawTarget = event.target;
+    if (!(rawTarget instanceof Element)) {
+      return;
+    }
 
-  if (window[RECORDER_RUNTIME_KEY] && window[RECORDER_RUNTIME_KEY].cleanup === cleanupRuntimeInstance) {
-    delete window[RECORDER_RUNTIME_KEY];
-  }
-}
+    if (isRecorderUiElement(rawTarget)) {
+      return;
+    }
 
-function handleRuntimeInvalidation(error) {
-  const errorMessage = error && error.message ? error.message : String(error || '');
-  if (!errorMessage.includes('Extension context invalidated')) {
-    return;
-  }
+    const resolvedTarget = resolveClickTarget(rawTarget, event);
+    const highlightRect = highlightElement(resolvedTarget);
 
-  console.warn('[runtime] extension context invalidated, disabling recorder');
-  cleanupRuntimeInstance();
-}
+    if (!highlightRect) {
+      return;
+    }
 
-function safeSendRuntimeMessage(message) {
-  return new Promise((resolve) => {
-    if (!chrome || !chrome.runtime || !chrome.runtime.id) {
-      resolve({ ok: false, error: 'Extension context invalidated.', response: null });
+    const isManual = state.mode === 'manual';
+    if (isManual) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') {
+        event.stopImmediatePropagation();
+      }
+
+      const pendingManualAction = buildPendingManualAction(rawTarget, resolvedTarget, event);
+      setRuntimeState({ pendingManualAction: pendingManualAction });
+
+      const fingerprint = buildTargetFingerprint(resolvedTarget);
+      const save = await showConfirmOverlay({
+        text: fingerprint.text || '确认保存该步骤吗？'
+      });
+
+      if (!save) {
+        clearHighlights();
+        replayPendingManualAction();
+        return;
+      }
+
+      try {
+        await captureAndCommit(resolvedTarget, highlightRect, true);
+      } catch (error) {
+        await reportRuntimeError({
+          stage: 'captureAndCommit',
+          error: error && error.message ? error.message : 'unknown_error'
+        });
+      } finally {
+        clearHighlights();
+        replayPendingManualAction();
+      }
+
       return;
     }
 
     try {
-      chrome.runtime.sendMessage(message, (response) => {
-        if (chrome.runtime.lastError) {
-          handleRuntimeInvalidation(new Error(chrome.runtime.lastError.message || 'runtime_error'));
-          resolve({
-            ok: false,
-            error: chrome.runtime.lastError.message || 'runtime_error',
-            response: null
-          });
-          return;
-        }
-
-        resolve({
-          ok: true,
-          error: null,
-          response: response || null
-        });
-      });
+      await captureAndCommit(resolvedTarget, highlightRect, false);
     } catch (error) {
-      handleRuntimeInvalidation(error);
-      resolve({
-        ok: false,
-        error: error && error.message ? error.message : 'runtime_error',
-        response: null
+      await reportRuntimeError({
+        stage: 'captureAndCommit',
+        error: error && error.message ? error.message : 'unknown_error'
       });
+    } finally {
+      clearHighlights();
     }
-  });
-}
-
-
-function ensureRecorderStyles() {
-  if (document.getElementById(RECORDER_STYLE_ID)) {
-    return;
   }
 
-  const style = document.createElement('style');
-  style.id = RECORDER_STYLE_ID;
-  style.textContent = `
-    .recording-overlay {
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 2147483646;
+  function startRuntime(payload) {
+    const state = getRuntimeState();
+    if (state.isRecording) {
+      setRuntimeState({
+        sessionId: payload && payload.sessionId ? payload.sessionId : state.sessionId,
+        mode: payload && payload.mode ? payload.mode : state.mode
+      });
+      return;
     }
 
-    .highlight-element {
-      position: absolute;
-      border-radius: 12px;
-      pointer-events: none;
-      box-shadow:
-        0 0 0 1.5px rgba(249, 115, 22, 0.4),
-        0 0 12px 4px rgba(249, 115, 22, 0.18),
-        0 0 24px 8px rgba(249, 115, 22, 0.08);
-      animation: step-recorder-pulse 1.8s ease-in-out infinite;
-      transition: box-shadow 0.2s ease;
-    }
-
-    .confirm-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.6);
-      z-index: 2147483647;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      backdrop-filter: blur(4px);
-    }
-
-    .confirm-overlay-content {
-      background: #e8ecf1;
-      padding: 24px 32px;
-      border-radius: 20px;
-      max-width: 400px;
-      width: min(90vw, 400px);
-      box-shadow:
-        8px 8px 16px rgba(163, 177, 198, 0.7),
-        -8px -8px 16px rgba(255, 255, 255, 0.9),
-        0 0 0 1px rgba(249, 115, 22, 0.2);
-      text-align: center;
-      animation: step-recorder-confirm-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-
-    .confirm-overlay-text {
-      font-size: 15px;
-      color: #4a5568;
-      margin-bottom: 24px;
-      line-height: 1.6;
-      word-break: break-word;
-    }
-
-    .confirm-overlay-actions {
-      display: flex;
-      gap: 16px;
-      justify-content: center;
-    }
-
-    .confirm-btn {
-      padding: 10px 24px;
-      border-radius: 14px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      border: none;
-      transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-    }
-
-    .confirm-save {
-      background: linear-gradient(145deg, #fb923c, #f97316);
-      color: #fff;
-      box-shadow: 4px 4px 10px rgba(249, 115, 22, 0.28);
-    }
-
-    .confirm-cancel {
-      background: #fff;
-      color: #475569;
-      box-shadow: 4px 4px 10px rgba(148, 163, 184, 0.2);
-    }
-
-    .confirm-btn:hover {
-      transform: translateY(-1px);
-    }
-
-    .confirm-btn:active {
-      transform: translateY(0);
-    }
-
-    @keyframes step-recorder-pulse {
-      0%, 100% {
-        box-shadow:
-          0 0 0 1.5px rgba(249, 115, 22, 0.32),
-          0 0 10px 3px rgba(249, 115, 22, 0.14),
-          0 0 20px 6px rgba(249, 115, 22, 0.08);
-      }
-      50% {
-        box-shadow:
-          0 0 0 2px rgba(249, 115, 22, 0.48),
-          0 0 18px 6px rgba(249, 115, 22, 0.24),
-          0 0 32px 10px rgba(249, 115, 22, 0.12);
-      }
-    }
-
-    @keyframes step-recorder-confirm-pop {
-      from {
-        transform: scale(0.92);
-        opacity: 0;
-      }
-      to {
-        transform: scale(1);
-        opacity: 1;
-      }
-    }
-  `;
-
-  document.documentElement.appendChild(style);
-}
-function createOverlay() {
-  if (overlay) {
-    return;
-  }
-
-  overlay = document.createElement('div');
-  overlay.className = 'recording-overlay';
-  overlay.setAttribute('data-step-recorder-ui', 'true');
-  document.documentElement.appendChild(overlay);
-}
-
-function startRecording() {
-  if (isRecording) {
-    console.log('[recording] already started');
-    return;
-  }
-
-  isRecording = true;
-  document.addEventListener('click', handleClick, true);
-  console.log('[recording] started');
-}
-
-function stopRecording() {
-  if (!isRecording) {
-    console.log('[recording] already stopped');
-    return;
-  }
-
-  isRecording = false;
-  pendingManualAction = null;
-  isReplayingClick = false;
-  document.removeEventListener('click', handleClick, true);
-  clearHighlights();
-  removeConfirmOverlay();
-  console.log('[recording] stopped');
-}
-
-function setManualConfirmMode(enabled) {
-  isManualConfirmMode = enabled;
-  console.log(`[recording] manual confirm mode: ${enabled ? 'enabled' : 'disabled'}`);
-}
-
-async function handleClick(event) {
-  if (!isRecording) {
-    return;
-  }
-
-  if (isReplayingClick) {
-    return;
-  }
-
-  const rawTarget = event.target;
-  if (!(rawTarget instanceof Element)) {
-    return;
-  }
-
-  if (isRecorderUiElement(rawTarget)) {
-    return;
-  }
-
-  const target = resolveClickTarget(rawTarget, event);
-  const highlightRect = highlightElement(target);
-  
-  window.currentHighlightRect = highlightRect;
-  window.currentSelector = getSelector(target);
-  window.currentText = getElementText(target);
-  
-  const selector = window.currentSelector;
-  const text = window.currentText;
-  const stepId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-  if (isManualConfirmMode) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (typeof event.stopImmediatePropagation === 'function') {
-      event.stopImmediatePropagation();
-    }
-
-    pendingManualAction = buildPendingManualAction(rawTarget, target, event);
-    await showConfirmOverlay(stepId, text);
-    return;
-  }
-
-  let screenshot = null;
-  try {
-    screenshot = await captureScreenshot(highlightRect);
-  } finally {
-    clearHighlights();
-  }
-
-  if (!screenshot) {
-    console.warn('[captureScreenshot] failed');
-    return;
-  }
-
-  try {
-    const result = await safeSendRuntimeMessage({
-      action: 'commitCapturedStep',
-      step: {
-        id: stepId,
-        actionType: 'click',
-        type: 'click',
-        target: {
-          selector,
-          text,
-          tagName: target.tagName.toLowerCase()
-        },
-        rect: getElementRect(target),
-        screenshot
-      }
+    setRuntimeState({
+      isRecording: true,
+      sessionId: payload && payload.sessionId ? payload.sessionId : state.sessionId,
+      mode: payload && payload.mode ? payload.mode : state.mode
     });
 
-    if (!result.ok) {
-      handleRuntimeInvalidation(new Error(result.error || 'runtime_error'));
-      console.error('[commitCapturedStep] failed:', result.error);
-    }
-  } catch (error) {
-    handleRuntimeInvalidation(error);
-    console.error('[commitCapturedStep] error:', error);
-  }
-}
-
-function resolveClickTarget(element, event) {
-  const interactiveAncestor = getInteractiveAncestor(element);
-  if (interactiveAncestor) {
-    return interactiveAncestor;
+    document.addEventListener('click', handleClick, true);
   }
 
-  const originRect = element.getBoundingClientRect();
-  const originArea = Math.max(originRect.width * originRect.height, 1);
-  const viewportArea = Math.max(window.innerWidth * window.innerHeight, 1);
-  const clickX = event.clientX;
-  const clickY = event.clientY;
+  function stopRuntime() {
+    const state = getRuntimeState();
 
-  let bestElement = element;
-  let bestScore = 0;
-  let current = element.parentElement;
-  let depth = 0;
+    setRuntimeState({
+      isRecording: false,
+      pendingManualAction: null,
+      currentCandidate: null,
+      isReplayingClick: false
+    });
 
-  while (current && current !== document.body && depth < 8) {
-    const rect = current.getBoundingClientRect();
-    const area = rect.width * rect.height;
+    document.removeEventListener('click', handleClick, true);
+    clearHighlights();
+    handleConfirmDecision(false);
+  }
 
-    if (area >= 1 && containsPoint(rect, clickX, clickY)) {
-      const growth = area / originArea;
-      const areaRatio = area / viewportArea;
-      const cardLike = isCardLikeElement(current);
-      const clickableContainer = hasClickableContainerHint(current);
+  function configureRuntime(payload) {
+    const nextState = {};
 
-      let score = 0;
-      if (cardLike) {
-        score += 3;
-      }
-      if (clickableContainer) {
-        score += 2;
-      }
-      if (growth > 1.4) {
-        score += Math.min(3, Math.log2(growth));
-      }
-      if (areaRatio > 0.55) {
-        score -= 4;
-      } else if (areaRatio > 0.35) {
-        score -= 2;
-      }
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestElement = current;
-      }
+    if (payload && payload.mode) {
+      nextState.mode = payload.mode;
     }
 
-    current = current.parentElement;
-    depth += 1;
-  }
-
-  return bestElement;
-}
-
-function isStrongInteractiveElement(element) {
-  if (element.matches(STRONG_INTERACTIVE_SELECTOR)) {
-    return true;
-  }
-
-  const nearestInteractive = element.closest(STRONG_INTERACTIVE_SELECTOR);
-  return nearestInteractive === element;
-}
-
-function getInteractiveAncestor(element) {
-  const strongAncestor = element.closest(STRONG_INTERACTIVE_SELECTOR);
-  if (strongAncestor) {
-    return strongAncestor;
-  }
-
-  let current = element;
-  let depth = 0;
-  while (current && current !== document.body && depth < 6) {
-    if (isButtonLikeElement(current)) {
-      return current;
+    if (payload && payload.sessionId) {
+      nextState.sessionId = payload.sessionId;
     }
-    current = current.parentElement;
-    depth += 1;
+
+    setRuntimeState(nextState);
   }
 
-  return null;
-}
+  function onBackgroundMessage(message, sender, sendResponse) {
+    if (message && message.type === messages.BACKGROUND_TO_CONTENT.RUNTIME_START) {
+      startRuntime(message.payload || {});
+      sendResponse({ ok: true });
+      return false;
+    }
 
-function isButtonLikeElement(element) {
-  const className = typeof element.className === 'string' ? element.className : '';
-  const id = element.id || '';
-  const hint = `${className} ${id}`;
-  if (!BUTTON_LIKE_PATTERN.test(hint)) {
+    if (message && message.type === messages.BACKGROUND_TO_CONTENT.RUNTIME_STOP) {
+      stopRuntime();
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (message && message.type === messages.BACKGROUND_TO_CONTENT.RUNTIME_CONFIGURE) {
+      configureRuntime(message.payload || {});
+      sendResponse({ ok: true });
+      return false;
+    }
+
     return false;
   }
 
-  if (hasClickableContainerHint(element)) {
-    return true;
+  function init() {
+    registerRuntimeInstance();
+    ensureRecorderStyles();
+    createOverlay();
+
+    const listener = onBackgroundMessage;
+    chrome.runtime.onMessage.addListener(listener);
+    setRuntimeState({ runtimeMessageListener: listener });
   }
 
-  if (typeof element.tabIndex === 'number' && element.tabIndex >= 0) {
-    return true;
-  }
-
-  return false;
-}
-
-function hasClickableContainerHint(element) {
-  if (element.hasAttribute('onclick') || element.hasAttribute('data-click') || element.hasAttribute('data-action')) {
-    return true;
-  }
-
-  const style = window.getComputedStyle(element);
-  if (style.cursor === 'pointer') {
-    return true;
-  }
-
-  const role = element.getAttribute('role');
-  if (role === 'button' || role === 'link') {
-    return true;
-  }
-
-  return false;
-}
-
-function isCardLikeElement(element) {
-  const className = typeof element.className === 'string' ? element.className : '';
-  const id = element.id || '';
-  const role = element.getAttribute('role') || '';
-  const dataType = element.getAttribute('data-type') || '';
-  const hintText = `${className} ${id} ${role} ${dataType}`.toLowerCase();
-
-  if (CARD_LIKE_PATTERN.test(hintText)) {
-    return true;
-  }
-
-  const rect = element.getBoundingClientRect();
-  return rect.width > 140 && rect.height > 70 && element.childElementCount >= 2;
-}
-
-function containsPoint(rect, x, y) {
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-}
-
-function highlightElement(element) {
-  clearHighlights();
-
-  if (!overlay) {
-    return null;
-  }
-
-  const rect = element.getBoundingClientRect();
-  const highlight = document.createElement('div');
-  highlight.className = 'highlight-element';
-
-  // Overlay is fixed to viewport, so use viewport coordinates.
-  highlight.style.top = `${rect.top}px`;
-  highlight.style.left = `${rect.left}px`;
-  highlight.style.width = `${rect.width}px`;
-  highlight.style.height = `${rect.height}px`;
-
-  overlay.appendChild(highlight);
-
-  return {
-    left: rect.left,
-    top: rect.top,
-    width: rect.width,
-    height: rect.height
-  };
-}
-
-function clearHighlights() {
-  if (!overlay) {
-    return;
-  }
-
-  while (overlay.firstChild) {
-    overlay.removeChild(overlay.firstChild);
-  }
-}
-
-function isRecorderUiElement(element) {
-  return Boolean(element.closest('[data-step-recorder-ui="true"]'));
-}
-
-function buildPendingManualAction(rawTarget, resolvedTarget, event) {
-  return {
-    rawTarget,
-    resolvedTarget,
-    mouseEventInit: {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      detail: typeof event.detail === 'number' ? event.detail : 1,
-      screenX: event.screenX,
-      screenY: event.screenY,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      ctrlKey: event.ctrlKey,
-      shiftKey: event.shiftKey,
-      altKey: event.altKey,
-      metaKey: event.metaKey,
-      button: event.button,
-      buttons: event.buttons
-    }
-  };
-}
-
-function showConfirmOverlay(stepId, text) {
-  const confirmOverlay = document.createElement('div');
-  confirmOverlay.className = 'confirm-overlay';
-  confirmOverlay.setAttribute('data-step-recorder-ui', 'true');
-  confirmOverlay.innerHTML = `
-    <div class="confirm-overlay-content">
-      <div class="confirm-overlay-text">${text || '确认此步骤？'}</div>
-      <div class="confirm-overlay-actions">
-        <button class="confirm-btn confirm-save">保存 (Enter)</button>
-        <button class="confirm-btn confirm-cancel">取消 (Esc)</button>
-      </div>
-    </div>
-  `;
-  document.documentElement.appendChild(confirmOverlay);
-
-  window.currentConfirmStep = {
-    stepId,
-    text,
-    overlay: confirmOverlay
-  };
-
-  const saveBtn = confirmOverlay.querySelector('.confirm-save');
-  const cancelBtn = confirmOverlay.querySelector('.confirm-cancel');
-
-  saveBtn.addEventListener('click', () => {
-    handleConfirmStep(stepId, true);
-  });
-
-  cancelBtn.addEventListener('click', () => {
-    handleConfirmStep(stepId, false);
-  });
-}
-
-function removeConfirmOverlay() {
-  if (window.currentConfirmStep && window.currentConfirmStep.overlay) {
-    window.currentConfirmStep.overlay.remove();
-    window.currentConfirmStep = null;
-  }
-}
-
-async function handleConfirmStep(stepId, save) {
-  if (!window.currentConfirmStep || window.currentConfirmStep.stepId !== stepId) {
-    console.warn('[confirm] step not found or mismatch:', stepId);
-    return;
-  }
-
-  const highlightRect = window.currentHighlightRect;
-  const selector = window.currentSelector || '';
-  const text = window.currentText || '';
-  window.currentHighlightRect = null;
-  window.currentSelector = null;
-  window.currentText = null;
-
-  removeConfirmOverlay();
-  clearHighlights();
-
-  if (!save) {
-    console.log('[confirm] step skipped:', stepId);
-    replayPendingManualAction();
-    return;
-  }
-
-  if (!highlightRect) {
-    console.warn('[confirm] no highlight rect found');
-    replayPendingManualAction();
-    return;
-  }
-
-  let screenshot = null;
-  screenshot = await captureScreenshot(highlightRect);
-
-  if (!screenshot) {
-    console.warn('[captureScreenshot] failed');
-    replayPendingManualAction();
-    return;
-  }
-
-  const targetElement = pendingManualAction ? pendingManualAction.resolvedTarget : null;
-  const result = await safeSendRuntimeMessage({
-    action: 'commitCapturedStep',
-    step: {
-      id: stepId,
-      actionType: 'click',
-      type: 'click',
-      target: {
-        selector,
-        text,
-        tagName: targetElement ? targetElement.tagName.toLowerCase() : ''
-      },
-      rect: targetElement ? getElementRect(targetElement) : highlightRect,
-      screenshot
-    }
-  });
-
-  if (!result.ok) {
-    handleRuntimeInvalidation(new Error(result.error || 'runtime_error'));
-    console.error('[commitCapturedStep] failed:', result.error);
-  }
-
-  replayPendingManualAction();
-}
-
-function replayPendingManualAction() {
-  const action = pendingManualAction;
-  pendingManualAction = null;
-
-  if (!action) {
-    return;
-  }
-
-  const replayTarget = getReplayTarget(action);
-  if (!replayTarget) {
-    return;
-  }
-
-  isReplayingClick = true;
-
-  try {
-    focusReplayTarget(replayTarget);
-    dispatchReplayPointerSequence(replayTarget, action.mouseEventInit);
-    triggerReplayClick(replayTarget, action.mouseEventInit);
-  } finally {
-    setTimeout(() => {
-      isReplayingClick = false;
-    }, 0);
-  }
-}
-
-function getReplayTarget(action) {
-  if (action.rawTarget instanceof Element && action.rawTarget.isConnected) {
-    return action.rawTarget;
-  }
-
-  if (action.resolvedTarget instanceof Element && action.resolvedTarget.isConnected) {
-    return action.resolvedTarget;
-  }
-
-  return null;
-}
-
-function focusReplayTarget(target) {
-  if (target instanceof HTMLElement && typeof target.focus === 'function') {
-    target.focus({ preventScroll: true });
-  }
-}
-
-function dispatchReplayPointerSequence(target, mouseEventInit) {
-  const PointerEventCtor = typeof PointerEvent === 'function' ? PointerEvent : null;
-
-  dispatchReplayEvent(target, 'pointerdown', mouseEventInit, PointerEventCtor);
-  dispatchReplayEvent(target, 'mousedown', mouseEventInit, MouseEvent);
-  dispatchReplayEvent(target, 'pointerup', mouseEventInit, PointerEventCtor);
-  dispatchReplayEvent(target, 'mouseup', mouseEventInit, MouseEvent);
-}
-
-function dispatchReplayEvent(target, type, mouseEventInit, EventCtor) {
-  if (typeof EventCtor !== 'function') {
-    return;
-  }
-
-  const baseInit = {
-    ...mouseEventInit,
-    view: window
-  };
-
-  const isPointerEvent = typeof PointerEvent === 'function' && EventCtor === PointerEvent;
-  if (isPointerEvent) {
-    target.dispatchEvent(new PointerEvent(type, {
-      ...baseInit,
-      pointerId: 1,
-      pointerType: 'mouse',
-      isPrimary: true
-    }));
-    return;
-  }
-
-  target.dispatchEvent(new EventCtor(type, baseInit));
-}
-
-function triggerReplayClick(target, mouseEventInit) {
-  if (target instanceof HTMLElement && typeof target.click === 'function') {
-    target.click();
-    return;
-  }
-
-  target.dispatchEvent(new MouseEvent('click', {
-    ...mouseEventInit,
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-    view: window
-  }));
-}
-
-function handleKeyDown(event) {
-  if (!isManualConfirmMode || !window.currentConfirmStep) {
-    return;
-  }
-
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    handleConfirmStep(window.currentConfirmStep.stepId, true);
-  } else if (event.key === 'Escape') {
-    event.preventDefault();
-    handleConfirmStep(window.currentConfirmStep.stepId, false);
-  }
-}
-
-function getSelector(element) {
-  if (element.id) {
-    return `#${element.id}`;
-  }
-
-  if (typeof element.className === 'string' && element.className.trim() !== '') {
-    const classes = element.className
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((className) => `.${className}`)
-      .join('');
-
-    if (classes) {
-      return `${element.tagName.toLowerCase()}${classes}`;
-    }
-  }
-
-  let selector = element.tagName.toLowerCase();
-  let currentElement = element;
-  let parent = currentElement.parentElement;
-
-  while (parent && parent.tagName !== 'BODY') {
-    const siblings = Array.from(parent.children);
-    const index = siblings.indexOf(currentElement) + 1;
-
-    selector = siblings.length > 1
-      ? `${parent.tagName.toLowerCase()}>${selector}:nth-child(${index})`
-      : `${parent.tagName.toLowerCase()}>${selector}`;
-
-    currentElement = parent;
-    parent = parent.parentElement;
-  }
-
-  return selector;
-}
-
-function getElementText(element) {
-  if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-    return normalizeText(element.placeholder || element.value || element.name || element.type || '');
-  }
-
-  if (element.tagName === 'BUTTON' || element.tagName === 'A') {
-    return normalizeText(element.textContent.trim() || element.innerText.trim() || element.title || element.alt || '');
-  }
-
-  const heading = element.querySelector('h1,h2,h3,h4,h5,h6,.title,.name,[data-title]');
-  if (heading) {
-    const headingText = normalizeText(heading.textContent || heading.innerText || '');
-    if (headingText) {
-      return headingText;
-    }
-  }
-
-  return normalizeText(
-    element.textContent.trim() ||
-    element.innerText.trim() ||
-    element.title ||
-    element.alt ||
-    element.tagName
-  );
-}
-
-function getElementRect(element) {
-  const rect = element.getBoundingClientRect();
-  return {
-    left: Math.round(rect.left),
-    top: Math.round(rect.top),
-    width: Math.round(rect.width),
-    height: Math.round(rect.height),
-    right: Math.round(rect.right),
-    bottom: Math.round(rect.bottom)
-  };
-}
-
-function normalizeText(value) {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
-  if (!text) {
-    return '';
-  }
-  return text.length > 80 ? `${text.slice(0, 80)}...` : text;
-}
-
-async function captureScreenshot(highlightRect) {
-  await waitForPaint(2);
-
-  const nativeScreenshot = await captureVisibleTabWithRetry();
-  if (nativeScreenshot) {
-    return annotateScreenshot(nativeScreenshot, highlightRect);
-  }
-
-  if (typeof html2canvas !== 'undefined') {
-    try {
-      const canvas = await html2canvas(document.documentElement, {
-        scale: window.devicePixelRatio || 1,
-        logging: false,
-        useCORS: true,
-        x: window.scrollX,
-        y: window.scrollY,
-        width: window.innerWidth,
-        height: window.innerHeight
-      });
-
-      return annotateScreenshot(canvas.toDataURL('image/png'), highlightRect);
-    } catch (error) {
-      console.warn('[captureScreenshot] html2canvas fallback failed:', error);
-    }
-  }
-
-  return null;
-}
-
-async function captureVisibleTabWithRetry() {
-  for (let attempt = 0; attempt <= NATIVE_CAPTURE_RETRIES; attempt += 1) {
-    const result = await captureVisibleTab();
-    if (result.screenshot) {
-      return result.screenshot;
-    }
-
-    if (result.error) {
-      console.warn('[captureVisibleTab] attempt failed:', result.error);
-    }
-
-    if (attempt < NATIVE_CAPTURE_RETRIES) {
-      await delay(NATIVE_CAPTURE_RETRY_DELAY_MS * (attempt + 1));
-    }
-  }
-
-  return null;
-}
-
-function captureVisibleTab() {
-  return new Promise((resolve) => {
-    safeSendRuntimeMessage({ action: 'captureTab' }).then((result) => {
-      if (!result.ok) {
-        handleRuntimeInvalidation(new Error(result.error || 'runtime_error'));
-        resolve({ screenshot: null, error: result.error || 'runtime_error' });
-        return;
-      }
-
-      resolve({
-        screenshot: result.response && result.response.screenshot ? result.response.screenshot : null,
-        error: result.response && result.response.error ? result.response.error : null
-      });
-    });
-  });
-}
-
-function annotateScreenshot(dataUrl, highlightRect) {
-  if (!dataUrl || !highlightRect) {
-    return Promise.resolve(dataUrl);
-  }
-
-  return new Promise((resolve) => {
-    const image = new Image();
-
-    image.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = image.width;
-      canvas.height = image.height;
-
-      const context = canvas.getContext('2d');
-      if (!context) {
-        resolve(dataUrl);
-        return;
-      }
-
-      context.drawImage(image, 0, 0);
-
-      const viewportWidth = Math.max(window.innerWidth, 1);
-      const viewportHeight = Math.max(window.innerHeight, 1);
-      const scaleX = image.width / viewportWidth;
-      const scaleY = image.height / viewportHeight;
-
-      const x = Math.max(0, highlightRect.left) * scaleX;
-      const y = Math.max(0, highlightRect.top) * scaleY;
-      const width = Math.max(1, highlightRect.width * scaleX);
-      const height = Math.max(1, highlightRect.height * scaleY);
-      const lineWidth = Math.max(2, Math.round(((scaleX + scaleY) / 2) * 3));
-      const radius = Math.max(8, Math.round(12 * ((scaleX + scaleY) / 2)));
-
-      drawRoundedRect(context, x, y, width, height, radius);
-      context.fillStyle = HIGHLIGHT_THEME.fill;
-      context.fill();
-
-      context.save();
-      context.strokeStyle = HIGHLIGHT_THEME.stroke;
-      context.lineWidth = lineWidth;
-      context.shadowColor = HIGHLIGHT_THEME.glowNear;
-      context.shadowBlur = Math.max(10, Math.round(lineWidth * 5));
-      drawRoundedRect(context, x, y, width, height, radius);
-      context.stroke();
-      context.restore();
-
-      context.save();
-      context.strokeStyle = HIGHLIGHT_THEME.glowFar;
-      context.lineWidth = Math.max(1, Math.round(lineWidth * 0.8));
-      context.shadowColor = HIGHLIGHT_THEME.glowFar;
-      context.shadowBlur = Math.max(18, Math.round(lineWidth * 9));
-      drawRoundedRect(context, x, y, width, height, radius + 1);
-      context.stroke();
-      context.restore();
-
-      resolve(canvas.toDataURL('image/png'));
-    };
-
-    image.onerror = () => {
-      resolve(dataUrl);
-    };
-
-    image.src = dataUrl;
-  });
-}
-
-function waitForPaint(frames = 1) {
-  return new Promise((resolve) => {
-    const tick = (remaining) => {
-      if (remaining <= 0) {
-        resolve();
-        return;
-      }
-
-      requestAnimationFrame(() => tick(remaining - 1));
-    };
-
-    tick(frames);
-  });
-}
-
-function delay(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-function drawRoundedRect(context, x, y, width, height, radius) {
-  const maxRadius = Math.min(radius, width / 2, height / 2);
-
-  context.beginPath();
-  context.moveTo(x + maxRadius, y);
-  context.lineTo(x + width - maxRadius, y);
-  context.quadraticCurveTo(x + width, y, x + width, y + maxRadius);
-  context.lineTo(x + width, y + height - maxRadius);
-  context.quadraticCurveTo(x + width, y + height, x + width - maxRadius, y + height);
-  context.lineTo(x + maxRadius, y + height);
-  context.quadraticCurveTo(x, y + height, x, y + height - maxRadius);
-  context.lineTo(x, y + maxRadius);
-  context.quadraticCurveTo(x, y, x + maxRadius, y);
-  context.closePath();
-}
-
-init();
-
-
-
-
+  init();
+})(typeof self !== 'undefined' ? self : window);

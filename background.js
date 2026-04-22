@@ -1,6 +1,13 @@
-importScripts(
+﻿importScripts(
+  'shared/constants.js',
+  'shared/message-types.js',
+  'shared/schemas.js',
   'background/asset-store.js',
   'background/session-store.js',
+  'background/ai-service.js',
+  'background/document-builder.js',
+  'background/recorder-service.js',
+  'background/message-router.js',
   'background/migration.js'
 );
 
@@ -8,48 +15,45 @@ let migrationPromise = null;
 
 function ensureMigrationsReady() {
   if (!migrationPromise) {
-    migrationPromise = runMigrationsIfNeeded().catch((error) => {
+    migrationPromise = runMigrationsIfNeeded().catch(function onMigrationError(error) {
       console.error('[migration] failed:', error);
       migrationPromise = null;
       throw error;
     });
   }
-
   return migrationPromise;
 }
 
 function sendMessageToTab(tabId, message) {
-  return new Promise((resolve) => {
+  return new Promise(function resolveSend(resolve) {
     if (typeof tabId !== 'number') {
       resolve(false);
       return;
     }
 
-    chrome.tabs.sendMessage(tabId, message, () => {
+    chrome.tabs.sendMessage(tabId, message, function onSend() {
       if (chrome.runtime.lastError) {
         resolve(false);
         return;
       }
-
       resolve(true);
     });
   });
 }
 
 function executeScript(tabId, files) {
-  return new Promise((resolve) => {
+  return new Promise(function resolveExecute(resolve) {
     chrome.scripting.executeScript(
       {
-        target: { tabId },
-        files
+        target: { tabId: tabId, allFrames: true },
+        files: files
       },
-      () => {
+      function onExecuted() {
         if (chrome.runtime.lastError) {
           console.warn('[executeScript] failed:', chrome.runtime.lastError.message);
           resolve(false);
           return;
         }
-
         resolve(true);
       }
     );
@@ -57,9 +61,20 @@ function executeScript(tabId, files) {
 }
 
 async function ensureRecorderScript(tabId) {
-  const injectedLib = await executeScript(tabId, ['lib/html2canvas.min.js']);
-  const injectedContent = await executeScript(tabId, ['content.js']);
-  return injectedLib && injectedContent;
+  const fileList = [
+    'shared/constants.js',
+    'shared/message-types.js',
+    'shared/schemas.js',
+    'content/runtime-state.js',
+    'content/target-fingerprint.js',
+    'content/page-context.js',
+    'content/screenshot-capture.js',
+    'content/manual-confirm.js',
+    'content/action-capture.js',
+    'content.js'
+  ];
+
+  return executeScript(tabId, fileList);
 }
 
 function isWebTab(tab) {
@@ -75,43 +90,28 @@ function isWebTab(tab) {
 }
 
 function queryTabs(queryInfo) {
-  return new Promise((resolve) => {
-    chrome.tabs.query(queryInfo, (tabs) => {
+  return new Promise(function resolveQuery(resolve) {
+    chrome.tabs.query(queryInfo, function onTabs(tabs) {
       resolve(Array.isArray(tabs) ? tabs : []);
     });
   });
 }
 
 function getTabById(tabId) {
-  return new Promise((resolve) => {
+  return new Promise(function resolveTab(resolve) {
     if (typeof tabId !== 'number') {
       resolve(null);
       return;
     }
 
-    chrome.tabs.get(tabId, (tab) => {
+    chrome.tabs.get(tabId, function onTab(tab) {
       if (chrome.runtime.lastError) {
         resolve(null);
         return;
       }
-
       resolve(tab || null);
     });
   });
-}
-
-function respondWithPromise(sendResponse, promise) {
-  promise
-    .then((result) => {
-      sendResponse(result);
-    })
-    .catch((error) => {
-      console.error('[background] action failed:', error);
-      sendResponse({
-        ok: false,
-        error: error && error.message ? error.message : 'unknown_error'
-      });
-    });
 }
 
 async function getBestActiveTab() {
@@ -138,282 +138,143 @@ async function getBestActiveTab() {
   return anyWeb[0] || null;
 }
 
-async function getRecorderState() {
-  await ensureMigrationsReady();
-  return getRecordingState();
+async function getCurrentActiveTabId() {
+  const tab = await getBestActiveTab();
+  return tab && typeof tab.id === 'number' ? tab.id : null;
 }
 
-async function setManualConfirmMode(tabId, enabled) {
-  const state = await getRecorderState();
-  if (state.recordingTabId !== tabId) {
-    return false;
-  }
-
-  return sendMessageToTab(tabId, {
-    action: 'setManualConfirmMode',
-    enabled
-  });
-}
-
-async function startRecording(tabId) {
-  await ensureMigrationsReady();
-  const activeTab = await getTabById(tabId);
-  const session = await startRecordingSession(tabId, activeTab ? activeTab.windowId : null);
-
-  let success = await sendMessageToTab(tabId, { action: 'startRecording' });
-  if (!success) {
-    console.warn('[startRecording] first send failed, trying to inject recorder scripts');
-    const injected = await ensureRecorderScript(tabId);
-    if (injected) {
-      success = await sendMessageToTab(tabId, { action: 'startRecording' });
-    }
-  }
-
-  if (success) {
-    await sendMessageToTab(tabId, {
-      action: 'setManualConfirmMode',
-      enabled: session.mode === 'manual'
-    });
-  } else {
-    await stopRecordingSession();
-  }
-
-  return success;
-}
-
-async function stopRecording(tabId) {
-  await ensureMigrationsReady();
-  const state = await getRecorderState();
-  const targetTabId = state.recordingTabId !== null ? state.recordingTabId : tabId;
-
-  await stopRecordingSession();
-  await sendMessageToTab(targetTabId, { action: 'stopRecording' });
-}
-
-async function handleCommitCapturedStep(message, sender) {
-  if (!message || !message.step) {
-    console.error('[commitCapturedStep] invalid message or missing step');
-    return { ok: false, error: 'invalid_message' };
-  }
-
-  await ensureMigrationsReady();
-  return commitCapturedStep(message.step, {
-    tabId: sender.tab ? sender.tab.id : null,
-    url: sender.tab ? sender.tab.url : '',
-    title: sender.tab ? sender.tab.title : ''
-  });
-}
-
-async function buildPanelStep(step) {
-  let screenshot = null;
-  const primaryAssetId = step.capture && step.capture.primaryAssetId
-    ? step.capture.primaryAssetId
-    : (step.primaryAssetId || null);
-
-  if (primaryAssetId) {
-    const preview = await getAssetPreview(primaryAssetId);
-    screenshot = preview ? preview.dataUrl : null;
-  }
-
+function createBackgroundContext() {
   return {
-    ...step,
-    type: step.type || step.actionType || 'click',
-    selector: step.selector || (step.target && step.target.selector) || '',
-    text: step.text || (step.target && step.target.text) || '',
-    url: step.url || (step.page && step.page.url) || '',
-    title: step.title || (step.page && step.page.title) || '',
-    screenshot
+    ensureMigrationsReady: ensureMigrationsReady,
+    sendMessageToTab: sendMessageToTab,
+    executeScript: executeScript,
+    ensureRecorderScript: ensureRecorderScript,
+    getBestActiveTab: getBestActiveTab,
+    getCurrentActiveTabId: getCurrentActiveTabId,
+    getTabById: getTabById
   };
 }
 
-async function buildPanelState() {
-  await ensureMigrationsReady();
-  const [state, activeSession] = await Promise.all([
-    getRecorderState(),
-    getActiveSession()
-  ]);
-
-  if (!activeSession) {
-    return {
-      ...state,
-      steps: []
-    };
-  }
-
-  const steps = await listSessionSteps(activeSession.id);
-  return {
-    ...state,
-    sessionId: activeSession.id,
-    steps: await Promise.all(steps.map((step) => buildPanelStep(step)))
-  };
-}
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'captureTab') {
-    const windowId = sender.tab ? sender.tab.windowId : chrome.windows.WINDOW_ID_CURRENT;
-
-    chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
-      if (chrome.runtime.lastError) {
-        sendResponse({
-          screenshot: null,
-          error: chrome.runtime.lastError.message || 'capture_failed'
-        });
-        return;
-      }
-
+function respondWithPromise(sendResponse, promise) {
+  promise
+    .then(function onResult(result) {
+      sendResponse(result);
+    })
+    .catch(function onError(error) {
+      console.error('[background] action failed:', error);
       sendResponse({
-        screenshot: dataUrl || null,
-        error: null
+        ok: false,
+        error: error && error.message ? error.message : 'unknown_error'
       });
     });
+}
 
+chrome.runtime.onMessage.addListener(function onRuntimeMessage(message, sender, sendResponse) {
+  const context = createBackgroundContext();
+  const messages = self.StepRecorderMessages;
+  const commandTypes = new Set(Object.values(messages.COMMAND));
+  const contentTypes = new Set(Object.values(messages.CONTENT_TO_BACKGROUND));
+
+  if (message && typeof message.type === 'string' && commandTypes.has(message.type)) {
+    respondWithPromise(sendResponse, handlePanelCommand(message.type, message.payload || {}, context));
     return true;
   }
 
-  if (message.action === 'getActiveTab') {
-    getBestActiveTab().then((tab) => {
-      sendResponse({ tab: tab || null });
-    });
-    return true;
-  }
-
-  if (message.action === 'getState') {
-    respondWithPromise(sendResponse, buildPanelState());
-    return true;
-  }
-
-  if (message.action === 'getRecordingState') {
-    respondWithPromise(sendResponse, getRecorderState().then((state) => ({
-        isRecording: state.isRecording,
-        recordingTabId: state.recordingTabId,
-        recordingMode: state.recordingMode
-      })));
-    return true;
-  }
-
-  if (message.action === 'startRecording') {
-    respondWithPromise(sendResponse, startRecording(message.tabId).then((ok) => ({ ok })));
-    return true;
-  }
-
-  if (message.action === 'stopRecording') {
-    respondWithPromise(sendResponse, stopRecording(message.tabId).then(() => ({ ok: true })));
-    return true;
-  }
-
-  if (message.action === 'setManualConfirmMode') {
-    respondWithPromise(sendResponse, setManualConfirmMode(message.tabId, message.enabled).then((ok) => ({ ok })));
-    return true;
-  }
-
-  if (message.action === 'updateRecordingMode') {
-    respondWithPromise(sendResponse, ensureMigrationsReady()
-      .then(() => updateRecordingMode(message.mode))
-      .then(async () => {
-        const state = await getRecorderState();
-        if (typeof state.recordingTabId === 'number') {
-          await sendMessageToTab(state.recordingTabId, {
-            action: 'setManualConfirmMode',
-            enabled: state.recordingMode === 'manual'
-          });
-        }
-        return { ok: true };
-      }));
-    return true;
-  }
-
-  if (message.action === 'captureStep') {
-    respondWithPromise(sendResponse, handleCommitCapturedStep({
-      step: {
-        id: message.stepId,
-        type: message.type,
-        selector: message.selector,
-        text: message.text,
-        screenshot: message.screenshot || null
-      }
-    }, sender));
-    return true;
-  }
-
-  if (message.action === 'commitCapturedStep') {
-    respondWithPromise(sendResponse, handleCommitCapturedStep(message, sender));
-    return true;
-  }
-
-  if (message.action === 'updateStepScreenshot') {
-    sendResponse({ ok: false, error: 'deprecated' });
-    return false;
-  }
-
-  if (message.action === 'getAssetPreview') {
-    respondWithPromise(sendResponse, ensureMigrationsReady()
-      .then(() => getAssetPreview(message.assetId))
-      .then((asset) => ({ asset })));
-    return true;
-  }
-
-  if (message.action === 'deleteStep') {
-    respondWithPromise(sendResponse, ensureMigrationsReady().then(() => deleteStep(message.stepId)));
-    return true;
-  }
-
-  if (message.action === 'clearSteps') {
-    respondWithPromise(sendResponse, ensureMigrationsReady().then(() => clearActiveSessionSteps()));
+  if (message && typeof message.type === 'string' && contentTypes.has(message.type)) {
+    respondWithPromise(sendResponse, handleRuntimeMessage(message, sender, context));
     return true;
   }
 
   return false;
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+chrome.runtime.onConnect.addListener(function onConnect(port) {
+  handlePanelPort(port, createBackgroundContext());
+});
+
+chrome.tabs.onUpdated.addListener(function onTabUpdated(tabId, changeInfo) {
   if (changeInfo.status !== 'complete') {
     return;
   }
 
-  getRecorderState().then(async (state) => {
-    if (!state.isRecording || state.recordingTabId !== tabId) {
-      return;
-    }
-
-    let success = await sendMessageToTab(tabId, { action: 'startRecording' });
-    if (!success) {
-      const injected = await ensureRecorderScript(tabId);
-      if (injected) {
-        success = await sendMessageToTab(tabId, { action: 'startRecording' });
+  ensureMigrationsReady()
+    .then(function onReady() {
+      return getRecordingState();
+    })
+    .then(async function onState(state) {
+      if (!state.isRecording || state.recordingTabId !== tabId) {
+        return;
       }
-    }
 
-    if (success) {
-      await sendMessageToTab(tabId, {
-        action: 'setManualConfirmMode',
-        enabled: state.recordingMode === 'manual'
+      const activeSession = await getActiveSession();
+      if (!activeSession) {
+        return;
+      }
+
+      let success = await sendMessageToTab(tabId, {
+        type: self.StepRecorderMessages.BACKGROUND_TO_CONTENT.RUNTIME_START,
+        payload: {
+          sessionId: activeSession.id,
+          mode: activeSession.mode
+        }
       });
-    }
-  }).catch((error) => {
-    console.error('[tabs.onUpdated] failed to resume recorder:', error);
-  });
-});
 
-chrome.tabs.onRemoved.addListener((tabId) => {
-  getRecorderState().then((state) => {
-    if (state.recordingTabId !== tabId) {
-      return;
-    }
+      if (!success) {
+        const injected = await ensureRecorderScript(tabId);
+        if (injected) {
+          success = await sendMessageToTab(tabId, {
+            type: self.StepRecorderMessages.BACKGROUND_TO_CONTENT.RUNTIME_START,
+            payload: {
+              sessionId: activeSession.id,
+              mode: activeSession.mode
+            }
+          });
+        }
+      }
 
-    stopRecordingSession().catch((error) => {
-      console.error('[tabs.onRemoved] failed to stop recorder:', error);
+      if (success) {
+        await sendMessageToTab(tabId, {
+          type: self.StepRecorderMessages.BACKGROUND_TO_CONTENT.RUNTIME_CONFIGURE,
+          payload: {
+            sessionId: activeSession.id,
+            mode: activeSession.mode
+          }
+        });
+      }
+    })
+    .catch(function onResumeError(error) {
+      console.error('[tabs.onUpdated] failed to resume recorder:', error);
     });
-  }).catch(() => {});
 });
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.tabs.onRemoved.addListener(function onTabRemoved(tabId) {
+  ensureMigrationsReady()
+    .then(function onReady() {
+      return getRecordingState();
+    })
+    .then(async function onState(state) {
+      if (state.recordingTabId !== tabId) {
+        return;
+      }
+
+      await stopRecordingSession();
+      await emitSnapshotEvent();
+      broadcastPanelEvent(self.StepRecorderMessages.EVENT.SESSION_UPDATED, {
+        session: null,
+        snapshot: await buildRecorderSnapshot()
+      });
+    })
+    .catch(function ignoreRemoveError() {});
+});
+
+chrome.runtime.onInstalled.addListener(async function onInstalled() {
   await ensureMigrationsReady();
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 });
 
-chrome.runtime.onStartup.addListener(() => {
-  ensureMigrationsReady().catch(() => {});
+chrome.runtime.onStartup.addListener(function onStartup() {
+  ensureMigrationsReady().catch(function ignoreStartupMigrationError() {});
 });
 
-ensureMigrationsReady().catch(() => {});
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+ensureMigrationsReady().catch(function ignoreBootMigrationError() {});
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(function ignoreSidePanelError() {});

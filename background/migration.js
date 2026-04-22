@@ -10,10 +10,16 @@ const LEGACY_IMPORTED_SESSION_ID = 'legacy-imported-session';
 async function runMigrationsIfNeeded() {
   const meta = await getRecorderMeta();
   if (meta && meta.schemaVersion >= RECORDER_SCHEMA_VERSION && meta.migrationState === 'completed') {
-    return { migrated: false, reason: 'already_migrated' };
+    const recovered = await recoverPendingCommits();
+    return { migrated: false, reason: 'already_migrated', recoveredCommits: recovered };
   }
 
-  return migrateLegacySteps();
+  const migrated = await migrateLegacySteps();
+  const recovered = await recoverPendingCommits();
+  return {
+    ...migrated,
+    recoveredCommits: recovered
+  };
 }
 
 async function migrateLegacySteps() {
@@ -63,10 +69,7 @@ async function migrateLegacySteps() {
     id: LEGACY_IMPORTED_SESSION_ID,
     status: oldIsRecording ? SESSION_STATUS.RECORDING : SESSION_STATUS.STOPPED,
     mode: oldMode,
-    tabId: oldRecordingTabId,
-    metadata: {
-      importedFromLegacy: true
-    }
+    tabId: oldRecordingTabId
   });
 
   for (let index = 0; index < oldSteps.length; index += 1) {
@@ -97,29 +100,28 @@ async function migrateLegacySteps() {
       seq: index + 1,
       status: STEP_STATUS.READY,
       actionType: oldStep.actionType || oldStep.type || 'click',
-      type: oldStep.type || oldStep.actionType || 'click',
-      target: oldStep.target || {
-        selector: oldStep.selector || '',
-        text: oldStep.text || '',
-        tagName: ''
-      },
-      selector: oldStep.selector || (oldStep.target && oldStep.target.selector) || '',
-      text: oldStep.text || (oldStep.target && oldStep.target.text) || '',
-      rect: oldStep.rect || null,
-      tabId: typeof oldStep.tabId === 'number' ? oldStep.tabId : oldRecordingTabId,
-      url: oldStep.url || '',
-      title: oldStep.title || '',
       page: {
         url: oldStep.url || '',
         title: oldStep.title || ''
       },
-      timestamp: oldStep.timestamp || new Date().toISOString(),
+      target: oldStep.target || {
+        tagName: '',
+        selector: oldStep.selector || '',
+        fallbackSelectors: [],
+        role: '',
+        text: oldStep.text || '',
+        ariaLabel: '',
+        placeholder: '',
+        href: '',
+        dataTestId: '',
+        rect: oldStep.rect || null,
+        framePath: []
+      },
       capture: {
         primaryAssetId: assetId,
         beforeAssetId: null,
         afterAssetId: null
       },
-      primaryAssetId: assetId,
       createdAt: oldStep.timestamp || new Date().toISOString()
     });
   }
