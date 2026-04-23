@@ -1,4 +1,4 @@
-﻿(function initContentRuntime(global) {
+(function initContentRuntime(global) {
   const messages = self.StepRecorderMessages;
   const RECORDER_STYLE_ID = 'step-recorder-content-styles';
   const RECORDER_RUNTIME_KEY = '__stepRecorderRuntimeV2__';
@@ -210,6 +210,18 @@
 
     state.overlay.appendChild(highlight);
 
+    const isInFrame = window !== window.top;
+    const frameContext = {
+      isInFrame: isInFrame,
+      frameElement: isInFrame ? (function getFrameElement() {
+        try {
+          return window.frameElement;
+        } catch (error) {
+          return null;
+        }
+      })() : null
+    };
+
     return {
       left: Math.round(rect.left),
       top: Math.round(rect.top),
@@ -218,7 +230,8 @@
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
       scrollX: window.scrollX,
-      scrollY: window.scrollY
+      scrollY: window.scrollY,
+      frameContext: frameContext
     };
   }
 
@@ -456,7 +469,8 @@
 
   async function captureAndCommit(targetElement, highlightRect, manualConfirmed) {
     const state = getRuntimeState();
-    const screenshot = await captureAnnotatedScreenshot(highlightRect);
+    const frameContext = highlightRect && highlightRect.frameContext ? highlightRect.frameContext : null;
+    const screenshot = await captureAnnotatedScreenshot(highlightRect, frameContext);
 
     const draft = buildActionDraft({
       actionType: 'click',

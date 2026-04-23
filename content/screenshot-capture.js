@@ -14,6 +14,85 @@
     });
   }
 
+  function convertRectToTopViewport(rect, frameContext) {
+    if (!frameContext || !frameContext.isInFrame) {
+      return {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        viewportWidth: rect.viewportWidth,
+        viewportHeight: rect.viewportHeight,
+        scrollX: rect.scrollX || 0,
+        scrollY: rect.scrollY || 0,
+        crossOriginFallback: false
+      };
+    }
+
+    try {
+      let totalOffsetX = 0;
+      let totalOffsetY = 0;
+      let currentWindow = window;
+      let hasCrossOrigin = false;
+
+      while (currentWindow && currentWindow !== currentWindow.top) {
+        try {
+          const frameElement = currentWindow.frameElement;
+          if (frameElement instanceof Element) {
+            const frameRect = frameElement.getBoundingClientRect();
+            totalOffsetX += frameRect.left + (frameElement.clientLeft || 0);
+            totalOffsetY += frameRect.top + (frameElement.clientTop || 0);
+            currentWindow = currentWindow.parent;
+          } else {
+            hasCrossOrigin = true;
+            break;
+          }
+        } catch (error) {
+          hasCrossOrigin = true;
+          break;
+        }
+      }
+
+      if (hasCrossOrigin) {
+        return {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+          viewportWidth: rect.viewportWidth || window.innerWidth,
+          viewportHeight: rect.viewportHeight || window.innerHeight,
+          scrollX: rect.scrollX || 0,
+          scrollY: rect.scrollY || 0,
+          crossOriginFallback: true
+        };
+      }
+
+      return {
+        left: Math.round(rect.left + totalOffsetX),
+        top: Math.round(rect.top + totalOffsetY),
+        width: rect.width,
+        height: rect.height,
+        viewportWidth: rect.viewportWidth || (currentWindow ? currentWindow.innerWidth : window.innerWidth),
+        viewportHeight: rect.viewportHeight || (currentWindow ? currentWindow.innerHeight : window.innerHeight),
+        scrollX: (currentWindow ? currentWindow.scrollX : 0) || 0,
+        scrollY: (currentWindow ? currentWindow.scrollY : 0) || 0,
+        crossOriginFallback: false
+      };
+    } catch (error) {
+      return {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        viewportWidth: rect.viewportWidth || window.innerWidth,
+        viewportHeight: rect.viewportHeight || window.innerHeight,
+        scrollX: rect.scrollX || 0,
+        scrollY: rect.scrollY || 0,
+        crossOriginFallback: true
+      };
+    }
+  }
+
   function waitForPaint(frames) {
     const totalFrames = typeof frames === 'number' ? frames : 1;
 
@@ -84,8 +163,15 @@
     context.closePath();
   }
 
-  function annotateScreenshot(dataUrl, annotationRect) {
+  function annotateScreenshot(dataUrl, annotationRect, options) {
     if (!dataUrl || !annotationRect) {
+      return Promise.resolve(dataUrl);
+    }
+
+    const shouldDrawFrame = options && options.shouldDrawFrame !== false;
+    const isCrossOrigin = options && options.isCrossOrigin === true;
+
+    if (isCrossOrigin || !shouldDrawFrame) {
       return Promise.resolve(dataUrl);
     }
 
@@ -105,13 +191,16 @@
 
         context.drawImage(image, 0, 0);
 
-        const viewportWidth = Math.max(window.innerWidth, 1);
-        const viewportHeight = Math.max(window.innerHeight, 1);
+        const viewportWidth = Math.max(annotationRect.viewportWidth || window.innerWidth, 1);
+        const viewportHeight = Math.max(annotationRect.viewportHeight || window.innerHeight, 1);
         const scaleX = image.width / viewportWidth;
         const scaleY = image.height / viewportHeight;
 
-        const x = Math.max(0, annotationRect.left) * scaleX;
-        const y = Math.max(0, annotationRect.top) * scaleY;
+        const scrollX = annotationRect.scrollX || 0;
+        const scrollY = annotationRect.scrollY || 0;
+
+        const x = Math.max(0, (annotationRect.left + scrollX) * scaleX);
+        const y = Math.max(0, (annotationRect.top + scrollY) * scaleY);
         const width = Math.max(1, annotationRect.width * scaleX);
         const height = Math.max(1, annotationRect.height * scaleY);
         const lineWidth = Math.max(2, Math.round(((scaleX + scaleY) / 2) * 3));
@@ -150,7 +239,7 @@
     });
   }
 
-  async function captureAnnotatedScreenshot(annotationRect) {
+  async function captureAnnotatedScreenshot(annotationRect, frameContext) {
     await waitForPaint(2);
 
     const nativeScreenshot = await captureVisibleTabWithRetry();
@@ -158,7 +247,19 @@
       return null;
     }
 
-    return annotateScreenshot(nativeScreenshot, annotationRect);
+    let convertedRect = annotationRect;
+    let isCrossOrigin = false;
+
+    if (frameContext && frameContext.isInFrame) {
+      const converted = convertRectToTopViewport(annotationRect, frameContext);
+      convertedRect = converted;
+      isCrossOrigin = converted.crossOriginFallback === true;
+    }
+
+    return annotateScreenshot(nativeScreenshot, convertedRect, {
+      shouldDrawFrame: !isCrossOrigin,
+      isCrossOrigin: isCrossOrigin
+    });
   }
 
   global.captureAnnotatedScreenshot = captureAnnotatedScreenshot;
