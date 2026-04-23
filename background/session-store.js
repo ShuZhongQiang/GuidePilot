@@ -275,16 +275,41 @@ async function updateSessionStepCount(sessionId, stepCount) {
   return updated;
 }
 
+async function calculateNextSeq(sessionId) {
+  const stepIds = await getSessionStepIds(sessionId);
+  const steps = await Promise.all(stepIds.map(function mapStep(stepId) {
+    return getStepRecord(stepId);
+  }));
+
+  const validSteps = steps.filter(Boolean);
+  if (validSteps.length === 0) {
+    return 1;
+  }
+
+  const maxSeq = validSteps.reduce(function findMax(max, step) {
+    return Math.max(max, step.seq || 0);
+  }, 0);
+
+  return maxSeq + 1;
+}
+
 async function saveStep(stepInput) {
   const normalized = normalizeStepRecord(stepInput);
   const existing = await getStepRecord(normalized.id);
   const stepIds = await getSessionStepIds(normalized.sessionId);
   const alreadyIndexed = stepIds.includes(normalized.id);
-  const seq = typeof normalized.seq === 'number' && normalized.seq > 0
-    ? normalized.seq
-    : existing && typeof existing.seq === 'number' && existing.seq > 0
-      ? existing.seq
-      : stepIds.length + (alreadyIndexed ? 0 : 1);
+  
+  let seq;
+  if (typeof normalized.seq === 'number' && normalized.seq > 0) {
+    seq = normalized.seq;
+  } else if (existing && typeof existing.seq === 'number' && existing.seq > 0) {
+    seq = existing.seq;
+  } else if (alreadyIndexed) {
+    seq = 1;
+  } else {
+    seq = await calculateNextSeq(normalized.sessionId);
+  }
+
   const nextStep = normalizeStepRecord({
     ...normalized,
     seq: seq,
@@ -382,6 +407,38 @@ async function listPendingCommits() {
   return commits;
 }
 
+async function renumberSessionSteps(sessionId) {
+  const stepIds = await getSessionStepIds(sessionId);
+  const steps = await Promise.all(stepIds.map(function mapStep(stepId) {
+    return getStepRecord(stepId);
+  }));
+
+  const validSteps = steps.filter(Boolean);
+  validSteps.sort(function sortBySeq(left, right) {
+    return (left.seq || 0) - (right.seq || 0);
+  });
+
+  const updates = {};
+  for (let index = 0; index < validSteps.length; index++) {
+    const step = validSteps[index];
+    const newSeq = index + 1;
+    if (step.seq !== newSeq) {
+      const updated = normalizeStepRecord({
+        ...step,
+        seq: newSeq,
+        updatedAt: new Date().toISOString()
+      });
+      updates[RECORDER_STORAGE_KEYS.STEP(step.id)] = updated;
+    }
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await setStorageLocal(updates);
+  }
+
+  return validSteps.length;
+}
+
 async function deleteStep(stepId) {
   const step = await getStepRecord(stepId);
   if (!step) {
@@ -405,6 +462,7 @@ async function deleteStep(stepId) {
   ]);
   await setSessionStepIds(step.sessionId, nextStepIds);
   await updateSessionStepCount(step.sessionId, nextStepIds.length);
+  await renumberSessionSteps(step.sessionId);
 
   return { ok: true, deleted: true, stepId: stepId };
 }
