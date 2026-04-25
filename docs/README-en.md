@@ -27,22 +27,21 @@ A Chrome browser extension similar to ScribeHow/Tango that automatically records
 ## 💡 Use Cases
 
 **SaaS Product Tutorials** - Quickly generate user operation guides, reduce customer support pressure
-**Internal Training Docs** - Record ERP, CRM, admin panel operation workflows
-**Accessibility Support** - Generate detailed step instructions for visually impaired users
+**Internal Training Docs** -- Generate detailed step instructions for visually impaired users
 **QA Test Reports** - Record bug reproduction steps for easier developer debugging
 **Standard Operating Procedures** - Automate enterprise SOP document generation
 **Sensitive Business Workflows** - Banking, healthcare, finance privacy-sensitive scenarios (data stored completely locally, not uploaded to cloud)
 
 ## 🆚 Why Choose GuidePilot?
 
-| Feature | GuidePilot | Tango / Scribe |
-|---------|------------|----------------|
-| **Data Privacy** | ✅ 100% local storage, never uploaded | ❌ Screenshots uploaded to third-party servers |
-| **Installation** | ✅ Chrome extension, one-click install | ✅ Chrome extension |
-| **AI Document Generation** | ✅ OpenAI-compatible API support | ✅ Built-in AI |
-| **Multi-Format Export** | ✅ Markdown / HTML / JSON | ⚠️ Limited formats |
-| **Offline Usage** | ✅ Fully supported | ❌ Requires internet connection |
-| **Pricing** | ✅ Open source & free | 💰 Paid subscription |
+| Feature                    | GuidePilot                            | Tango / Scribe                                |
+| -------------------------- | ------------------------------------- | --------------------------------------------- |
+| **Data Privacy**           | ✅ 100% local storage, never uploaded  | ❌ Screenshots uploaded to third-party servers |
+| **Installation**           | ✅ Chrome extension, one-click install | ✅ Chrome extension                            |
+| **AI Document Generation** | ✅ OpenAI-compatible API support       | ✅ Built-in AI                                 |
+| **Multi-Format Export**    | ✅ Markdown / HTML / JSON              | ⚠️ Limited formats                            |
+| **Offline Usage**          | ✅ Fully supported                     | ❌ Requires internet connection                |
+| **Pricing**                | ✅ Open source & free                  | 💰 Paid subscription                          |
 
 > 🔒 **Privacy & Security is GuidePilot's Core Advantage**: Unlike competitors like Tango and Scribe, all your operation data and screenshots are stored completely locally in your browser and never uploaded to any third-party servers. This is crucial for teams handling sensitive information (such as internal enterprise systems, customer data, financial information).
 
@@ -55,13 +54,9 @@ A Chrome browser extension similar to ScribeHow/Tango that automatically records
    git clone https://github.com/ShuZhongQiang/step-capture-extension.git
    cd step-capture-extension
    ```
-
 2. Open Chrome browser and navigate to `chrome://extensions/`
-
 3. Enable **Developer mode** in the top right corner
-
 4. Click **Load unpacked** and select the project root directory
-
 5. Installation complete, the extension icon will appear in the toolbar
 
 ### Basic Usage
@@ -74,10 +69,10 @@ A Chrome browser extension similar to ScribeHow/Tango that automatically records
 
 ### Recording Modes
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| 🟢 Auto Mode | Auto-capture screenshot and save without confirmation | Quick recording, familiar workflows |
-| 🟡 Manual Mode | Highlight display with confirmation dialog | Precise recording, step filtering |
+| Mode           | Description                                           | Use Case                            |
+| -------------- | ----------------------------------------------------- | ----------------------------------- |
+| 🟢 Auto Mode   | Auto-capture screenshot and save without confirmation | Quick recording, familiar workflows |
+| 🟡 Manual Mode | Highlight display with confirmation dialog            | Precise recording, step filtering   |
 
 ### AI Document Generation (Optional)
 
@@ -92,36 +87,34 @@ A Chrome browser extension similar to ScribeHow/Tango that automatically records
      language: 'en-US'
    }
    ```
-
 2. After recording, click the **AI Generate** button
-
 3. Automatically generate optimized step titles and documentation
 
 ## 📦 Export Formats
 
-| Format | Use Case | Features |
-|--------|----------|----------|
-| **Markdown** | Technical docs, GitHub README | Plain text, easy to edit, version control friendly |
-| **HTML** | Browser viewing, website embedding | Rich text, beautiful styling, ready to use |
-| **JSON** | Data exchange, secondary development | Structured data, programmable processing |
+| Format       | Use Case                             | Features                                           |
+| ------------ | ------------------------------------ | -------------------------------------------------- |
+| **Markdown** | Technical docs, GitHub README        | Plain text, easy to edit, version control friendly |
+| **HTML**     | Browser viewing, website embedding   | Rich text, beautiful styling, ready to use         |
+| **JSON**     | Data exchange, secondary development | Structured data, programmable processing           |
 
 > All export formats include screenshot images, automatically packaged as ZIP file download.
 
 ## ❓ FAQ
 
-**Q: Will recording affect page performance?**  
+**Q: Will recording affect page performance?**\
 A: There will be a slight impact, mainly from highlight animations and screenshot operations. It is recommended to stop recording promptly after completion.
 
-**Q: Why are some clicks not recorded?**  
+**Q: Why are some clicks not recorded?**\
 A: The following situations may not be recorded: clicking on the extension's own UI, clicking non-interactive elements (such as plain text), or selecting cancel in manual mode.
 
-**Q: Is AI configuration required?**  
+**Q: Is AI configuration required?**\
 A: No, it's optional. When not configured, default rules will be used to generate documents.
 
-**Q: Does it support Firefox or Edge?**  
+**Q: Does it support Firefox or Edge?**\
 A: Currently developed for Chrome only. Chromium-based browsers (such as Edge) can be used directly. Firefox requires adaptation of some APIs.
 
-**Q: How to backup recorded steps?**  
+**Q: How to backup recorded steps?**\
 A: Use the export function to export steps as JSON format, which preserves complete data (including screenshots).
 
 ## 🛠️ Development Guide
@@ -156,6 +149,7 @@ cd step-capture-extension
 ## 📋 Version History
 
 ### v1.0.0 (Current)
+
 - ✅ Basic recording functionality
 - ✅ Auto/Manual dual modes
 - ✅ Screenshot annotation
@@ -166,18 +160,21 @@ cd step-capture-extension
 ## 🔮 Roadmap
 
 ### Short-term
+
 - [ ] Support input operation recording (text input, selection, etc.)
 - [ ] Support scroll operation recording
 - [ ] Optimize screenshot performance and quality
 - [ ] Add step editing functionality
 
 ### Mid-term
+
 - [ ] Support more export formats (PDF, Word)
 - [ ] Implement step sharing functionality (cloud storage)
 - [ ] Support batch operations
 - [ ] Add keyboard shortcut support
 
 ### Long-term
+
 - [ ] Support cross-browser synchronization
 - [ ] Team collaboration functionality
 - [ ] Template marketplace
@@ -195,6 +192,7 @@ cd step-capture-extension
 Community contributions are welcome! Please read the following before submitting issues or PRs.
 
 ### How to Contribute
+
 1. Fork this repository
 2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
 3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
@@ -202,6 +200,7 @@ Community contributions are welcome! Please read the following before submitting
 5. Open a Pull Request
 
 ### Contribution Requirements
+
 - Follow existing code style
 - Add necessary comments
 - Ensure functionality tests pass
@@ -236,14 +235,14 @@ For details, see [Commercial License Terms](COMMERCIAL_LICENSE.md).
 
 ### Third-Party Dependencies
 
-This project uses third-party libraries. For license information, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+This project uses third-party libraries. For license information, see [THIRD\_PARTY\_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## 📬 Contact
 
 - **GitHub Issues**: [Report Issues](https://github.com/ShuZhongQiang/step-capture-extension/issues)
-- **Email**: chenspace1998@gmail.com
+- **Email**: <chenspace1998@gmail.com>
 - **Commercial License Inquiry**: Contact us via the above methods
 
----
+***
 
 ⭐ **If you find GuidePilot useful, please give the project a star!**

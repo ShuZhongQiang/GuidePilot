@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "步骤图录制器",
+  "name": "GuidePilot",
   "version": "1.0.0",
   "description": "记录浏览器操作步骤并生成指南",
   "permissions": [

@@ -3,83 +3,82 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>步骤图录制器</title>
+  <title>GuidePilot</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body class="sidepanel-body">
   <div class="sidepanel-container">
     <div id="home-view" class="panel-view panel-view--active">
-      <div class="control-section">
-        <div class="control-buttons">
-          <button id="start-record" class="neo-btn neo-btn-primary">▶ 开始录制</button>
-          <button id="stop-record" class="neo-btn neo-btn-danger" disabled>■ 停止录制</button>
-        </div>
-        <div class="status-container">
-          <span id="recording-status" class="status">● 就绪</span>
-          <span id="recording-badge" class="recording-badge hidden">● REC</span>
-        </div>
-      </div>
-
-      <div class="meta-grid">
-        <div class="session-section compact-section">
-          <h2>当前 Session</h2>
-          <div id="session-overview" class="session-overview">
-            <div class="overview-empty">当前没有活动会话</div>
-          </div>
-        </div>
-
-        <div class="document-section compact-section">
-          <h2>文档状态</h2>
-          <div class="document-row">
-            <div id="document-status" class="doc-status doc-status--idle" title="文档尚未构建">未构建</div>
-            <button id="ai-generate" class="neo-btn neo-btn-secondary neo-btn-sm">AI 生成</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="quick-actions">
-        <button id="open-ai-config" class="quick-action-card" type="button">
-          <span class="quick-action-title">AI 配置</span>
-          <span class="quick-action-desc">模型、Endpoint、API Key</span>
+      <div class="sidepanel-header">
+        <h1>GuidePilot</h1>
+        <button id="open-ai-config" class="icon-btn settings-btn" type="button" title="AI 配置">
+          <img src="icons/settings.svg" alt="设置" class="icon-img">
         </button>
       </div>
 
-      <div class="mode-section">
-        <h2>录制模式</h2>
-        <div class="mode-options">
-          <label class="mode-option">
-            <input type="radio" name="recording-mode" value="auto" checked>
-            <div class="mode-copy">
-              <span class="mode-label">自动模式</span>
-              <span class="mode-desc">点击后自动截图并保存</span>
-            </div>
+      <div class="record-area">
+        <button id="start-record" class="record-main-btn">
+          <svg class="record-play-icon" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+            <polygon points="10,8 16,12 10,16" fill="currentColor"/>
+          </svg>
+          <span>开 始</span>
+        </button>
+        <button id="stop-record" class="stop-main-btn hidden" disabled>
+          <svg class="record-stop-icon" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+            <rect x="8" y="8" width="8" height="8" fill="currentColor"/>
+          </svg>
+          <span>停 止</span>
+        </button>
+      </div>
+
+      <div class="mode-bar">
+        <div class="mode-toggle-left">
+          <span class="mode-text">自动</span>
+          <label class="switch">
+            <input type="checkbox" id="auto-mode-toggle" checked>
+            <span class="slider"></span>
           </label>
-          <label class="mode-option">
-            <input type="radio" name="recording-mode" value="manual">
-            <div class="mode-copy">
-              <span class="mode-label">手动确认模式</span>
-              <span class="mode-desc">高亮后确认是否保存</span>
-            </div>
-          </label>
+          <span class="mode-hint">点击后自动截图并保存</span>
+        </div>
+        <div class="status-right">
+          <span id="recording-dot" class="status-dot-green"></span>
+          <span id="status-text" class="status-text-small">就绪</span>
         </div>
       </div>
 
-      <div class="steps-section">
+      <div class="steps-area">
         <div class="steps-header">
-          <h2>步骤列表 <span id="steps-count" class="steps-count"></span></h2>
-          <button id="clear-steps" class="neo-btn neo-btn-sm neo-btn-danger" title="清空所有步骤">清空</button>
+          <h2>步骤</h2>
+          <button id="clear-steps" class="clear-btn" title="清空所有步骤">
+            <img src="icons/trash.svg" alt="清空" class="icon-img-small">
+          </button>
         </div>
         <div id="steps-container" class="steps-container">
-          <p class="empty-message">暂无步骤记录</p>
+          <div class="empty-state">
+            <img src="icons/photo.svg" alt="无步骤" class="empty-icon">
+            <p>暂无步骤记录</p>
+            <span class="empty-hint">点击"开始"捕捉操作步骤</span>
+          </div>
         </div>
       </div>
 
-      <div class="export-section">
-        <h2>导出</h2>
-        <div class="export-options">
-          <button id="export-markdown" class="export-button">Markdown</button>
-          <button id="export-html" class="export-button">HTML</button>
-          <button id="export-json" class="export-button">JSON</button>
+      <div class="bottom-bar">
+        <button id="ai-generate" class="ai-pill-btn" type="button">
+          AI生成
+        </button>
+        <div class="export-group">
+          <span class="export-label">导出</span>
+          <button id="export-html" class="export-icon-btn" type="button" title="导出HTML">
+            <img src="icons/html.svg" alt="HTML">
+          </button>
+          <button id="export-markdown" class="export-icon-btn" type="button" title="导出Markdown">
+            <img src="icons/markdown.svg" alt="Markdown">
+          </button>
+          <button id="export-json" class="export-icon-btn" type="button" title="导出JSON">
+            <img src="icons/json.svg" alt="JSON">
+          </button>
         </div>
       </div>
     </div>

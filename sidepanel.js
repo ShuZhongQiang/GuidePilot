@@ -6,10 +6,7 @@ const constants = window.StepRecorderConstants || {};
 
 const startRecordBtn = document.getElementById('start-record');
 const stopRecordBtn = document.getElementById('stop-record');
-const recordingStatus = document.getElementById('recording-status');
-const recordingBadge = document.getElementById('recording-badge');
 const stepsContainer = document.getElementById('steps-container');
-const stepsCount = document.getElementById('steps-count');
 const clearStepsBtn = document.getElementById('clear-steps');
 const exportMarkdownBtn = document.getElementById('export-markdown');
 const exportHtmlBtn = document.getElementById('export-html');
@@ -24,8 +21,11 @@ const backFromAiConfigBtn = document.getElementById('back-from-ai-config');
 const aiPromptInput = document.getElementById('ai-prompt');
 const aiGenerateConfirmBtn = document.getElementById('ai-generate-confirm');
 const aiGenerateCancelBtn = document.getElementById('ai-generate-cancel');
-const modeRadios = document.querySelectorAll('input[name="recording-mode"]');
-const sessionOverview = document.getElementById('session-overview');
+const autoModeToggle = document.getElementById('auto-mode-toggle');
+const modeText = document.querySelector('.mode-text');
+const modeHint = document.querySelector('.mode-hint');
+const recordingDot = document.getElementById('recording-dot');
+const statusText = document.getElementById('status-text');
 const documentStatus = document.getElementById('document-status');
 const aiApiKeyInput = document.getElementById('ai-api-key');
 const aiEndpointInput = document.getElementById('ai-endpoint');
@@ -45,7 +45,6 @@ function switchView(viewName) {
     if (!view) {
       return;
     }
-
     if (key === viewName) {
       view.classList.add('panel-view--active');
     } else {
@@ -60,7 +59,6 @@ function setDocumentStatus(status, message) {
     documentStatus: status,
     documentMessage: message || ''
   };
-
   renderDocumentStatus();
 }
 
@@ -68,68 +66,55 @@ function renderDocumentStatus() {
   if (!documentStatus) {
     return;
   }
-
   const status = panelState.documentStatus || 'idle';
   const message = panelState.documentMessage || '';
-
   documentStatus.className = 'doc-status doc-status--' + status;
   documentStatus.textContent = compactDocumentStatusLabel(status);
   documentStatus.title = message || compactDocumentStatusTitle(status);
 }
 
-function renderSessionOverview() {
-  if (!sessionOverview) {
-    return;
-  }
-
-  const session = panelState.session;
-  if (!session) {
-    sessionOverview.innerHTML = '<div class="overview-empty">当前没有活动会话</div>';
-    return;
-  }
-
-  const stepCount = Number(session.stepCount) || panelState.steps.length || 0;
-
-  sessionOverview.innerHTML = [
-    '<div class="session-summary-row">',
-    '<span class="session-chip" title="' + escapeHtml(session.id || '') + '"><span class="session-chip-label">ID</span>' + escapeHtml(compactSessionId(session.id)) + '</span>',
-    '<span class="session-chip"><span class="session-chip-label">状态</span>' + escapeHtml(session.status || 'idle') + '</span>',
-    '<span class="session-chip session-chip--steps"><span class="session-chip-label">步骤</span>' + String(stepCount) + '</span>',
-    '</div>'
-  ].join('');
-}
-
 function updateModeUI() {
-  modeRadios.forEach(function eachRadio(radio) {
-    radio.checked = radio.value === panelState.recordingMode;
-  });
+  const isAuto = panelState.recordingMode === 'auto';
+  if (autoModeToggle) {
+    autoModeToggle.checked = isAuto;
+  }
+  if (modeText) {
+    modeText.textContent = isAuto ? '自动' : '手动';
+  }
+  if (modeHint) {
+    modeHint.textContent = isAuto
+      ? '点击后自动截图并保存'
+      : '高亮后确认是否保存';
+  }
 }
 
 function updateStatusUI() {
   const isRecording = panelState.isRecording === true;
 
   if (startRecordBtn) {
+    if (isRecording) {
+      startRecordBtn.classList.add('hidden');
+    } else {
+      startRecordBtn.classList.remove('hidden');
+    }
     startRecordBtn.disabled = isRecording;
   }
 
   if (stopRecordBtn) {
+    if (isRecording) {
+      stopRecordBtn.classList.remove('hidden');
+    } else {
+      stopRecordBtn.classList.add('hidden');
+    }
     stopRecordBtn.disabled = !isRecording;
   }
 
-  if (recordingStatus) {
-    isRecording ? recordingStatus.classList.add('hidden') : recordingStatus.classList.remove('hidden');
+  if (recordingDot) {
+    recordingDot.className = isRecording ? 'status-dot-red' : 'status-dot-green';
   }
 
-  if (recordingBadge) {
-    if (isRecording) {
-      recordingBadge.classList.remove('hidden');
-    } else {
-      recordingBadge.classList.add('hidden');
-    }
-  }
-
-  if (stepsCount) {
-    stepsCount.textContent = panelState.steps.length > 0 ? '(' + panelState.steps.length + ')' : '';
+  if (statusText) {
+    statusText.textContent = isRecording ? '录制中' : '就绪';
   }
 }
 
@@ -144,9 +129,7 @@ function renderStepsView() {
 function renderAll() {
   updateStatusUI();
   updateModeUI();
-  renderSessionOverview();
   renderStepsView();
-  renderDocumentStatus();
   ensureIdlePreviews();
 }
 
@@ -179,7 +162,6 @@ function getActiveTab() {
         resolve(null);
         return;
       }
-
       resolve(tabs[0] || null);
     });
   });
@@ -201,19 +183,10 @@ async function loadAiConfig() {
     ...defaultAi,
     ...((savedSettings && savedSettings.ai) || {})
   };
-
-  if (aiApiKeyInput) {
-    aiApiKeyInput.value = aiSettings.apiKey || '';
-  }
-  if (aiEndpointInput) {
-    aiEndpointInput.value = aiSettings.endpoint || defaultAi.endpoint || '';
-  }
-  if (aiModelInput) {
-    aiModelInput.value = aiSettings.model || defaultAi.model || '';
-  }
-  if (aiLanguageInput) {
-    aiLanguageInput.value = aiSettings.language || defaultAi.language || 'zh-CN';
-  }
+  if (aiApiKeyInput) aiApiKeyInput.value = aiSettings.apiKey || '';
+  if (aiEndpointInput) aiEndpointInput.value = aiSettings.endpoint || defaultAi.endpoint || '';
+  if (aiModelInput) aiModelInput.value = aiSettings.model || defaultAi.model || '';
+  if (aiLanguageInput) aiLanguageInput.value = aiSettings.language || defaultAi.language || 'zh-CN';
 }
 
 async function refreshSnapshot() {
@@ -270,7 +243,6 @@ async function handleStopRecording() {
   if (!result || result.ok === false) {
     throw new Error(result && result.error ? result.error : 'stop_failed');
   }
-
   if (result.snapshot) {
     mergeSnapshot(result.snapshot);
   } else {
@@ -278,8 +250,8 @@ async function handleStopRecording() {
   }
 }
 
-async function handleModeChange(event) {
-  const mode = event && event.target ? event.target.value : 'auto';
+async function handleModeChange() {
+  const mode = autoModeToggle && autoModeToggle.checked ? 'auto' : 'manual';
 
   const result = await sendPanelCommand(messages.COMMAND.SETTINGS_UPDATE, {
     mode: mode
@@ -331,13 +303,8 @@ async function handleSaveAiConfig() {
 }
 
 async function handleDeleteStep(step) {
-  if (!step || !step.id) {
-    return;
-  }
-
-  if (!confirm('确定删除该步骤吗？')) {
-    return;
-  }
+  if (!step || !step.id) return;
+  if (!confirm('确定删除该步骤吗？')) return;
 
   const result = await sendPanelCommand(messages.COMMAND.STEP_DELETE, {
     stepId: step.id
@@ -357,13 +324,8 @@ async function handleLoadPreview(step) {
       ? step.capture.primaryAssetId
       : null;
 
-  if (!step || !step.id || !assetId) {
-    return;
-  }
-
-  if (previewLoadState.has(step.id)) {
-    return;
-  }
+  if (!step || !step.id || !assetId) return;
+  if (previewLoadState.has(step.id)) return;
 
   previewLoadState.add(step.id);
 
@@ -409,9 +371,7 @@ async function handleLoadPreview(step) {
 }
 
 async function handleOpenPreview(step) {
-  if (!step || !step.id) {
-    return;
-  }
+  if (!step || !step.id) return;
 
   let currentStep = step;
 
@@ -422,9 +382,7 @@ async function handleOpenPreview(step) {
     }) || currentStep;
   }
 
-  if (!currentStep.preview || !currentStep.preview.dataUrl) {
-    return;
-  }
+  if (!currentStep.preview || !currentStep.preview.dataUrl) return;
 
   try {
     await showImagePreviewOnActivePage(currentStep);
@@ -437,33 +395,21 @@ async function handleOpenPreview(step) {
 
 function ensureIdlePreviews() {
   panelState.steps.forEach(function eachStep(step) {
-    if (!step || !step.preview || !step.preview.assetId) {
-      return;
-    }
-
-    if (step.preview.status !== 'idle') {
-      return;
-    }
-
+    if (!step || !step.preview || !step.preview.assetId) return;
+    if (step.preview.status !== 'idle') return;
     handleLoadPreview(step).catch(function ignorePreviewError() {});
   });
 }
 
 async function handleClearSteps() {
-  if (!Array.isArray(panelState.steps) || panelState.steps.length === 0) {
-    return;
-  }
-
-  if (!confirm('确定清空当前会话的全部步骤吗？')) {
-    return;
-  }
+  if (!Array.isArray(panelState.steps) || panelState.steps.length === 0) return;
+  if (!confirm('确定清空当前会话的全部步骤吗？')) return;
 
   const steps = panelState.steps.slice();
   for (const step of steps) {
     const result = await sendPanelCommand(messages.COMMAND.STEP_DELETE, {
       stepId: step.id
     });
-
     if (!result || result.ok === false) {
       throw new Error(result && result.error ? result.error : 'clear_failed');
     }
@@ -504,7 +450,6 @@ async function handleExport(format, useAi, options) {
 
 async function handleAiGenerateSubmit() {
   const prompt = aiPromptInput && aiPromptInput.value ? aiPromptInput.value.trim() : '';
-
   if (!prompt) {
     alert('请输入 AI 生成提示词。');
     return;
@@ -555,8 +500,8 @@ function setupEventListeners() {
   }
 
   if (exportMarkdownBtn) {
-    exportMarkdownBtn.addEventListener('click', function onExportMarkdownClick() {
-      handleExport('markdown', false).catch(function onExportMarkdownError(error) {
+    exportMarkdownBtn.addEventListener('click', function onExportClick() {
+      handleExport('markdown', false).catch(function onError(error) {
         console.error('[export markdown] failed:', error);
         alert('导出失败，请重试。');
       });
@@ -564,8 +509,8 @@ function setupEventListeners() {
   }
 
   if (exportHtmlBtn) {
-    exportHtmlBtn.addEventListener('click', function onExportHtmlClick() {
-      handleExport('html', false).catch(function onExportHtmlError(error) {
+    exportHtmlBtn.addEventListener('click', function onExportClick() {
+      handleExport('html', false).catch(function onError(error) {
         console.error('[export html] failed:', error);
         alert('导出失败，请重试。');
       });
@@ -573,8 +518,8 @@ function setupEventListeners() {
   }
 
   if (exportJsonBtn) {
-    exportJsonBtn.addEventListener('click', function onExportJsonClick() {
-      handleExport('json', false).catch(function onExportJsonError(error) {
+    exportJsonBtn.addEventListener('click', function onExportClick() {
+      handleExport('json', false).catch(function onError(error) {
         console.error('[export json] failed:', error);
         alert('导出失败，请重试。');
       });
@@ -582,16 +527,14 @@ function setupEventListeners() {
   }
 
   if (aiGenerateBtn) {
-    aiGenerateBtn.addEventListener('click', function onAiGenerateClick() {
+    aiGenerateBtn.addEventListener('click', function onAiClick() {
       switchView('aiGenerate');
-      if (aiPromptInput) {
-        aiPromptInput.focus();
-      }
+      if (aiPromptInput) aiPromptInput.focus();
     });
   }
 
   if (openAiConfigBtn) {
-    openAiConfigBtn.addEventListener('click', function onOpenAiConfigClick() {
+    openAiConfigBtn.addEventListener('click', function onSettingsClick() {
       loadAiConfig().catch(function onLoadError(error) {
         console.error('[ai-config] load failed:', error);
       });
@@ -600,25 +543,25 @@ function setupEventListeners() {
   }
 
   if (backFromAiGenerateBtn) {
-    backFromAiGenerateBtn.addEventListener('click', function onBackClick() {
+    backFromAiGenerateBtn.addEventListener('click', function onBack() {
       switchView('home');
     });
   }
 
   if (backFromAiConfigBtn) {
-    backFromAiConfigBtn.addEventListener('click', function onBackClick() {
+    backFromAiConfigBtn.addEventListener('click', function onBack() {
       switchView('home');
     });
   }
 
   if (aiGenerateCancelBtn) {
-    aiGenerateCancelBtn.addEventListener('click', function onCancelClick() {
+    aiGenerateCancelBtn.addEventListener('click', function onCancel() {
       switchView('home');
     });
   }
 
   if (aiGenerateConfirmBtn) {
-    aiGenerateConfirmBtn.addEventListener('click', function onConfirmClick() {
+    aiGenerateConfirmBtn.addEventListener('click', function onConfirm() {
       handleAiGenerateSubmit().catch(function onAiError(error) {
         console.error('[export ai] failed:', error);
         alert('AI 文档生成失败，请检查配置后重试。');
@@ -626,17 +569,17 @@ function setupEventListeners() {
     });
   }
 
-  modeRadios.forEach(function eachRadio(radio) {
-    radio.addEventListener('change', function onModeChange(event) {
-      handleModeChange(event).catch(function onModeError(error) {
+  if (autoModeToggle) {
+    autoModeToggle.addEventListener('change', function onToggleChange() {
+      handleModeChange().catch(function onModeError(error) {
         console.error('[mode] failed:', error);
         alert('模式切换失败，请重试。');
       });
     });
-  });
+  }
 
   if (aiSaveConfigBtn) {
-    aiSaveConfigBtn.addEventListener('click', function onSaveConfigClick() {
+    aiSaveConfigBtn.addEventListener('click', function onSaveConfig() {
       handleSaveAiConfig().catch(function onSaveError(error) {
         console.error('[ai-config] failed:', error);
         alert('保存配置失败，请重试。');
@@ -645,53 +588,17 @@ function setupEventListeners() {
   }
 }
 
-function escapeHtml(value) {
-  return String(value || '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function compactSessionId(sessionId) {
-  const text = String(sessionId || '');
-  if (text.length <= 12) {
-    return text || '-';
-  }
-
-  return text.slice(0, 6) + '...' + text.slice(-4);
-}
-
 function compactDocumentStatusLabel(status) {
-  if (status === 'building') {
-    return '构建中';
-  }
-
-  if (status === 'ready') {
-    return '已就绪';
-  }
-
-  if (status === 'failed') {
-    return '构建失败';
-  }
-
+  if (status === 'building') return '构建中';
+  if (status === 'ready') return '已就绪';
+  if (status === 'failed') return '构建失败';
   return '未构建';
 }
 
 function compactDocumentStatusTitle(status) {
-  if (status === 'building') {
-    return '文档构建中';
-  }
-
-  if (status === 'ready') {
-    return '文档已就绪';
-  }
-
-  if (status === 'failed') {
-    return '文档构建失败';
-  }
-
+  if (status === 'building') return '文档构建中';
+  if (status === 'ready') return '文档已就绪';
+  if (status === 'failed') return '文档构建失败';
   return '文档尚未构建';
 }
 
@@ -722,7 +629,6 @@ async function showImagePreviewOnActivePage(step) {
           reject(new Error(chrome.runtime.lastError.message || 'send_preview_failed'));
           return;
         }
-
         resolve(response || { ok: true });
       }
     );

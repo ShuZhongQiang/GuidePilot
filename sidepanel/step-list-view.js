@@ -1,4 +1,12 @@
 (function initStepListView(global) {
+  var EMPTY_STATE_HTML = [
+    '<div class="empty-state">',
+    '<img src="icons/photo.svg" alt="无步骤" class="empty-icon">',
+    '<p>暂无步骤记录</p>',
+    '<span class="empty-hint">点击"开始"捕捉操作步骤</span>',
+    '</div>'
+  ].join('');
+
   function escapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;')
@@ -47,7 +55,7 @@
     }
 
     if (!Array.isArray(steps) || steps.length === 0) {
-      container.innerHTML = '<p class="empty-message">暂无步骤记录</p>';
+      container.innerHTML = EMPTY_STATE_HTML;
       return;
     }
 
@@ -110,7 +118,7 @@
       deleteButton.type = 'button';
       deleteButton.className = 'step-delete-btn';
       deleteButton.title = '删除此步骤';
-      deleteButton.innerHTML = '<img src="icons/delete.svg" alt="删除" class="delete-icon">';
+      deleteButton.innerHTML = '<img src="icons/trash.svg" alt="删除" class="delete-icon">';
       deleteButton.addEventListener('click', function onDelete() {
         if (typeof opts.onDeleteStep === 'function') {
           opts.onDeleteStep(step);
