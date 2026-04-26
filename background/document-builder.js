@@ -10,30 +10,32 @@ function escapeDocumentText(value) {
 function buildStepInstruction(stepPayload) {
   const targetText = stepPayload.targetText || '目标元素';
   const actionType = stepPayload.actionType || 'click';
-  const placeholder = stepPayload.placeholder || '';
+  const placeholder = cleanPlaceholder(stepPayload.placeholder) || targetText;
   const inputType = stepPayload.inputType || '';
+  const hasValue = stepPayload.hasValue;
+  const valuePolicy = stepPayload.valuePolicy || 'redacted';
 
   if (actionType === 'click') {
-    // 对于密码框、邮箱等特殊类型，生成更语义化的描述
     if (inputType === 'password') {
-      return '点击"' + targetText + '"输入密码';
-    }
-    if (inputType === 'email') {
-      return '点击"' + targetText + '"输入邮箱';
+      return '点击"' + placeholder + '"激活密码输入';
     }
     return '点击"' + targetText + '"';
   }
 
   if (actionType === 'input') {
-    // 对于输入操作，使用 placeholder 或语义化名称
-    const description = placeholder || targetText;
     if (inputType === 'password') {
-      return '在"' + description + '"中输入密码';
+      return '在密码输入框中输入你的登录密码（内容将以***隐藏显示）';
     }
     if (inputType === 'email') {
-      return '在"' + description + '"中输入邮箱地址';
+      return '在"' + placeholder + '"中输入邮箱地址';
     }
-    return '在"' + description + '"中输入内容';
+    if (inputType === 'text') {
+      if (hasValue) {
+        return '在"' + placeholder + '"中输入内容';
+      }
+      return '在"' + placeholder + '"中输入内容';
+    }
+    return '在"' + placeholder + '"中输入内容';
   }
 
   if (actionType === 'scroll') {
@@ -48,6 +50,8 @@ function buildStepTitle(stepPayload) {
   const actionType = stepPayload.actionType || 'click';
   const pageTitle = stepPayload.pageTitle || '';
   const inputType = stepPayload.inputType || '';
+  const placeholder = cleanPlaceholder(stepPayload.placeholder);
+  const hasValue = stepPayload.hasValue;
 
   if (!targetText || targetText === '目标元素') {
     if (pageTitle) {
@@ -56,25 +60,32 @@ function buildStepTitle(stepPayload) {
     return '执行操作';
   }
 
-  if (actionType === 'click') {
-    if (inputType === 'password') {
-      return '点击"' + targetText + '"输入密码';
-    }
-    if (inputType === 'email') {
-      return '点击"' + targetText + '"输入邮箱';
-    }
-    return '点击"' + targetText + '"';
-  }
-
   if (actionType === 'input') {
-    const description = stepPayload.placeholder || targetText;
+    const description = placeholder || targetText;
     if (inputType === 'password') {
-      return '在"' + description + '"中输入密码';
+      return '输入登录密码';
     }
     if (inputType === 'email') {
       return '输入邮箱地址到"' + description + '"';
     }
+    if (inputType === 'text') {
+      return '输入"' + description + '"';
+    }
     return '输入内容到"' + description + '"';
+  }
+
+  if (actionType === 'click') {
+    if (inputType === 'password') {
+      return '点击密码输入框';
+    }
+    if (targetText.toLowerCase().includes('登录') || targetText.toLowerCase().includes('login')) {
+      return '点击登录按钮';
+    }
+    return '点击"' + targetText + '"';
+  }
+
+  if (actionType === 'select') {
+    return '选择"' + (placeholder || targetText) + '"';
   }
 
   if (actionType === 'scroll') {
@@ -98,6 +109,28 @@ function simplifyPageTitle(title) {
   return title;
 }
 
+function cleanPlaceholder(value) {
+  if (!value) {
+    return '';
+  }
+  var text = String(value).trim();
+  if (!text) {
+    return '';
+  }
+  var patterns = [
+    /^请输入\s*/i,
+    /^请填写\s*/i,
+    /^输入\s*/i,
+    /^enter\s*/i,
+    /^please\s+enter\s*/i,
+    /^please\s+input\s*/i
+  ];
+  for (var i = 0; i < patterns.length; i++) {
+    text = text.replace(patterns[i], '');
+  }
+  return text.trim();
+}
+
 function simplifyPageUrl(url) {
   if (!url) {
     return '';
@@ -114,6 +147,28 @@ function simplifyPageUrl(url) {
   }
 }
 
+function detectDocumentScenario(steps) {
+  if (!steps || steps.length === 0) {
+    return null;
+  }
+
+  const hasPassword = steps.some(function(s) { return s.inputType === 'password'; });
+  const hasInput = steps.some(function(s) { return s.actionType === 'input'; });
+  const hasLoginButton = steps.some(function(s) {
+    return s.actionType === 'click' && s.targetText && /登录|login|sign\s*in/i.test(s.targetText);
+  });
+
+  if (hasPassword && hasLoginButton) {
+    return 'login';
+  }
+
+  if (hasInput && hasPassword) {
+    return 'form';
+  }
+
+  return null;
+}
+
 function generateDocumentSummary(steps) {
   if (!steps || steps.length === 0) {
     return '';
@@ -122,13 +177,21 @@ function generateDocumentSummary(steps) {
   const pageCount = new Set(steps.filter(function(s) { return s.pageUrl; }).map(function(s) { return s.pageUrl; })).size;
   const stepCount = steps.length;
 
-  let summary = '本操作指南共包含 ' + stepCount + ' 个步骤';
+  const actionTypeCount = new Set(steps.map(function(s) { return s.actionType || 'click'; })).size;
+  const hasPassword = steps.some(function(s) { return s.inputType === 'password'; });
+  const hasInput = steps.some(function(s) { return s.actionType === 'input'; });
+
+  let summary = '本操作指南共包含 ' + stepCount + ' 个操作步骤';
 
   if (pageCount > 0) {
     summary += '，涉及 ' + pageCount + ' 个页面';
   }
 
-  summary += '。';
+  if (hasPassword && hasInput) {
+    summary += '。包含登录认证相关操作。';
+  } else {
+    summary += '。';
+  }
 
   return summary;
 }
@@ -222,7 +285,10 @@ async function buildCanonicalDocument(sessionId) {
     const pageTitle = step.page && step.page.title ? step.page.title : '';
     const actionType = step.actionType || 'click';
     const placeholder = step.target && step.target.placeholder ? step.target.placeholder : '';
-    const inputType = step.target && step.target.role ? step.target.role : '';
+    const inputType = step.inputType || '';
+    const hasValue = step.hasValue === true;
+    const valuePolicy = step.valuePolicy || 'redacted';
+    const valueKind = step.valueKind || '';
 
     const payload = {
       stepId: step.id,
@@ -236,6 +302,9 @@ async function buildCanonicalDocument(sessionId) {
       selector: selector,
       placeholder: placeholder,
       inputType: inputType,
+      hasValue: hasValue,
+      valuePolicy: valuePolicy,
+      valueKind: valueKind,
       primaryAssetId: step.capture && step.capture.primaryAssetId
         ? step.capture.primaryAssetId
         : null
@@ -251,10 +320,14 @@ async function buildCanonicalDocument(sessionId) {
 
   const sections = generateSections(canonicalSteps);
   const summary = generateDocumentSummary(canonicalSteps);
+  const scenario = detectDocumentScenario(canonicalSteps);
   const stepsWithSections = assignStepsToSections(canonicalSteps, sections);
 
   var documentTitle = '操作指南';
-  if (canonicalSteps.length > 0) {
+  if (scenario === 'login') {
+    var pageName = canonicalSteps[0].pageTitle || '系统';
+    documentTitle = pageName + ' - 登录指南';
+  } else if (canonicalSteps.length > 0) {
     var firstPageTitle = canonicalSteps[0].pageTitle;
     if (firstPageTitle) {
       documentTitle = firstPageTitle + ' - 操作指南';
@@ -265,6 +338,7 @@ async function buildCanonicalDocument(sessionId) {
     session: session,
     title: documentTitle,
     summary: summary,
+    scenario: scenario,
     sections: sections,
     steps: stepsWithSections
   };

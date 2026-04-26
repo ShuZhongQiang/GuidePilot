@@ -476,17 +476,188 @@
     }
   }
 
-  async function captureAndCommit(targetElement, highlightRect, manualConfirmed) {
+  const INPUT_TRACKING_KEY = '__stepRecorderInputTracking__';
+
+  function getInputTracking(element) {
+    if (!element || !element[INPUT_TRACKING_KEY]) {
+      return null;
+    }
+    return element[INPUT_TRACKING_KEY];
+  }
+
+  function setInputTracking(element, tracking) {
+    element[INPUT_TRACKING_KEY] = tracking;
+  }
+
+  function clearInputTracking(element) {
+    if (element && element[INPUT_TRACKING_KEY]) {
+      delete element[INPUT_TRACKING_KEY];
+    }
+  }
+
+  function isElementForInputTracking(element) {
+    return element && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement);
+  }
+
+  function resolveInputType(element) {
+    if (element instanceof HTMLTextAreaElement) {
+      return 'text';
+    }
+    if (element instanceof HTMLSelectElement) {
+      return 'select';
+    }
+    if (element instanceof HTMLInputElement) {
+      return element.type || 'text';
+    }
+    return 'text';
+  }
+
+  function shouldSkipInputType(type) {
+    return type === 'hidden' || type === 'submit' || type === 'button' || type === 'reset' || type === 'checkbox' || type === 'radio' || type === 'file';
+  }
+
+  function buildValueSummary(inputType, value) {
+    const hasValue = Boolean(value && String(value).trim().length > 0);
+    if (inputType === 'password') {
+      return {
+        hasValue: hasValue,
+        valuePolicy: 'redacted',
+        valueKind: 'password',
+        safeValue: ''
+      };
+    }
+    return {
+      hasValue: hasValue,
+      valuePolicy: 'store',
+      valueKind: inputType,
+      safeValue: hasValue ? String(value) : ''
+    };
+  }
+
+  function flushInputField(element, manualConfirmed) {
+    const state = getRuntimeState();
+    const tracking = getInputTracking(element);
+    if (!tracking || tracking.committed) {
+      return Promise.resolve(false);
+    }
+
+    tracking.committed = true;
+    clearInputTracking(element);
+
+    const inputType = resolveInputType(element);
+    const valueSummary = buildValueSummary(inputType, element.value || '');
+
+    const highlightRect = highlightElement(element);
+    if (!highlightRect) {
+      clearHighlights();
+      return Promise.resolve(false);
+    }
+
+    return captureAndCommit(element, highlightRect, manualConfirmed, 'input', {
+      inputType: inputType,
+      hasValue: valueSummary.hasValue,
+      valuePolicy: valueSummary.valuePolicy,
+      valueKind: valueSummary.valueKind
+    }).then(function okFlush(result) {
+      clearHighlights();
+      return result;
+    }).catch(function errFlush(error) {
+      clearHighlights();
+      reportRuntimeError({
+        stage: 'flushInputField',
+        error: error && error.message ? error.message : 'unknown_error'
+      });
+      return false;
+    });
+  }
+
+  function handleInputFieldBlur(event) {
+    const state = getRuntimeState();
+    if (!state.isRecording) {
+      return;
+    }
+
+    const target = event.target;
+    if (!isElementForInputTracking(target)) {
+      return;
+    }
+
+    flushInputField(target, state.mode !== 'manual');
+  }
+
+  function handleInputFieldChange(event) {
+    const state = getRuntimeState();
+    if (!state.isRecording) {
+      return;
+    }
+
+    const target = event.target;
+    if (!isElementForInputTracking(target)) {
+      return;
+    }
+
+    const tracking = getInputTracking(target);
+    if (tracking) {
+      tracking.lastValue = target.value || '';
+      tracking.lastChangeAt = Date.now();
+    }
+  }
+
+  async function handleInput(event) {
+    const state = getRuntimeState();
+
+    if (!state.isRecording || state.isReplayingClick) {
+      return;
+    }
+
+    const target = event.target;
+    if (!isElementForInputTracking(target)) {
+      return;
+    }
+
+    if (isRecorderUiElement(target)) {
+      return;
+    }
+
+    const inputType = resolveInputType(target);
+    if (shouldSkipInputType(inputType)) {
+      return;
+    }
+
+    let tracking = getInputTracking(target);
+    if (!tracking) {
+      tracking = {
+        element: target,
+        inputType: inputType,
+        startedAt: Date.now(),
+        lastValue: target.value || '',
+        lastChangeAt: Date.now(),
+        committed: false
+      };
+      setInputTracking(target, tracking);
+
+      target.addEventListener('blur', handleInputFieldBlur, true);
+      target.addEventListener('change', handleInputFieldChange, true);
+    } else {
+      tracking.lastValue = target.value || '';
+      tracking.lastChangeAt = Date.now();
+    }
+  }
+
+  async function captureAndCommit(targetElement, highlightRect, manualConfirmed, actionType, extraData) {
     const state = getRuntimeState();
     const frameContext = highlightRect && highlightRect.frameContext ? highlightRect.frameContext : null;
     const screenshot = await captureAnnotatedScreenshot(highlightRect, frameContext);
 
+    clearHighlights();
+
     const draft = buildActionDraft({
-      actionType: 'click',
+      actionType: actionType || 'click',
       targetElement: targetElement,
       annotationRect: highlightRect,
       primaryImageDataUrl: screenshot,
-      manualConfirmed: manualConfirmed
+      manualConfirmed: manualConfirmed,
+      ...extraData
     });
 
     const result = await commitCapturedStep(state.sessionId, draft);
@@ -515,6 +686,13 @@
 
     if (isRecorderUiElement(rawTarget)) {
       return;
+    }
+
+    if (rawTarget instanceof HTMLInputElement || rawTarget instanceof HTMLTextAreaElement) {
+      const inputType = resolveInputType(rawTarget);
+      if (!shouldSkipInputType(inputType)) {
+        return;
+      }
     }
 
     const resolvedTarget = resolveClickTarget(rawTarget, event);
@@ -549,12 +727,12 @@
       try {
         await captureAndCommit(resolvedTarget, highlightRect, true);
       } catch (error) {
+        clearHighlights();
         await reportRuntimeError({
           stage: 'captureAndCommit',
           error: error && error.message ? error.message : 'unknown_error'
         });
       } finally {
-        clearHighlights();
         replayPendingManualAction();
       }
 
@@ -564,12 +742,11 @@
     try {
       await captureAndCommit(resolvedTarget, highlightRect, false);
     } catch (error) {
+      clearHighlights();
       await reportRuntimeError({
         stage: 'captureAndCommit',
         error: error && error.message ? error.message : 'unknown_error'
       });
-    } finally {
-      clearHighlights();
     }
   }
 
@@ -590,10 +767,26 @@
     });
 
     document.addEventListener('click', handleClick, true);
+    document.addEventListener('input', handleInput, true);
   }
 
   function stopRuntime() {
     const state = getRuntimeState();
+
+    if (state.sessionId) {
+      var allTracked = document.querySelectorAll('input[' + INPUT_TRACKING_KEY + '], textarea[' + INPUT_TRACKING_KEY + ']');
+      for (var i = 0; i < allTracked.length; i++) {
+        var el = allTracked[i];
+        var tracking = getInputTracking(el);
+        if (tracking && !tracking.committed && el.value && String(el.value).trim().length > 0) {
+          try {
+            flushInputField(el, true);
+          } catch (e) {
+            clearInputTracking(el);
+          }
+        }
+      }
+    }
 
     setRuntimeState({
       isRecording: false,
@@ -603,6 +796,9 @@
     });
 
     document.removeEventListener('click', handleClick, true);
+    document.removeEventListener('input', handleInput, true);
+    document.removeEventListener('blur', handleInputFieldBlur, true);
+    document.removeEventListener('change', handleInputFieldChange, true);
     clearHighlights();
     handleConfirmDecision(false);
   }

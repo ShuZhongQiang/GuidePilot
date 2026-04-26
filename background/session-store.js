@@ -667,6 +667,10 @@ async function finalizePendingCommit(pendingCommit) {
     sessionId: pendingCommit.sessionId,
     status: STEP_STATUS.READY,
     actionType: pendingCommit.draft.actionType,
+    inputType: pendingCommit.draft.inputType || '',
+    hasValue: pendingCommit.draft.hasValue === true,
+    valuePolicy: pendingCommit.draft.valuePolicy || 'redacted',
+    valueKind: pendingCommit.draft.valueKind || '',
     page: pendingCommit.draft.page,
     target: pendingCommit.draft.target,
     capture: {

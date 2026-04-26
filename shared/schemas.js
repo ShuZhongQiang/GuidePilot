@@ -94,6 +94,10 @@
       seq: typeof step.seq === 'number' ? step.seq : 0,
       status: stringOrEmpty(step.status || stepStatus.READY || 'ready'),
       actionType: stringOrEmpty(step.actionType || actionType.CLICK || 'click'),
+      inputType: stringOrEmpty(step.inputType),
+      hasValue: Boolean(step.hasValue),
+      valuePolicy: stringOrEmpty(step.valuePolicy || 'redacted'),
+      valueKind: stringOrEmpty(step.valueKind),
       page: normalizePageRecord(step.page),
       target: normalizeTargetFingerprint(step.target),
       capture: normalizeCaptureRecord(step.capture),
@@ -130,6 +134,10 @@
     return {
       actionId: String(draft.actionId || createId('action')),
       actionType: String(draft.actionType || actionType.CLICK || 'click'),
+      inputType: String(draft.inputType || ''),
+      hasValue: Boolean(draft.hasValue),
+      valuePolicy: String(draft.valuePolicy || 'redacted'),
+      valueKind: String(draft.valueKind || draft.inputType || ''),
       page: normalizePageRecord(draft.page),
       target: normalizeTargetFingerprint(draft.target),
       capture: {
@@ -191,6 +199,12 @@
       pageUrl: stringOrEmpty(step.pageUrl),
       pageTitle: stringOrEmpty(step.pageTitle),
       targetText: stringOrEmpty(step.targetText),
+      actionType: stringOrEmpty(step.actionType || 'click'),
+      inputType: stringOrEmpty(step.inputType),
+      hasValue: Boolean(step.hasValue),
+      valuePolicy: stringOrEmpty(step.valuePolicy),
+      valueKind: stringOrEmpty(step.valueKind),
+      placeholder: stringOrEmpty(step.placeholder),
       selector: stringOrEmpty(step.selector),
       primaryAssetId: step.primaryAssetId ? String(step.primaryAssetId) : null
     };

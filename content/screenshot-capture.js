@@ -1,4 +1,4 @@
-﻿(function initScreenshotCapture(global) {
+(function initScreenshotCapture(global) {
   const NATIVE_CAPTURE_RETRIES = 2;
   const NATIVE_CAPTURE_RETRY_DELAY_MS = 80;
   const HIGHLIGHT_THEME = {
@@ -256,7 +256,7 @@
   }
 
   async function captureAnnotatedScreenshot(annotationRect, frameContext) {
-    await waitForPaint(2);
+    await waitForPaint(1);
 
     const nativeScreenshot = await captureVisibleTabWithRetry();
     if (!nativeScreenshot) {

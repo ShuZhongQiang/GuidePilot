@@ -12,6 +12,10 @@ async function buildPanelStepFromRecord(step) {
     seq: step.seq,
     status: step.status,
     actionType: step.actionType,
+    inputType: step.inputType || '',
+    hasValue: step.hasValue === true,
+    valuePolicy: step.valuePolicy || 'redacted',
+    valueKind: step.valueKind || '',
     page: step.page || { url: '', title: '' },
     target: step.target || {
       tagName: '',
@@ -294,7 +298,8 @@ async function buildDocumentResult(payload) {
       session: canonicalDocument.session,
       steps: canonicalDocument.steps,
       language: settings.ai && settings.ai.language ? settings.ai.language : 'zh-CN',
-      prompt: prompt
+      prompt: prompt,
+      scenario: canonicalDocument.scenario || ''
     }, settings.ai || {});
     finalDocument = applyAiRewriteToDocument(canonicalDocument, aiResult);
   }

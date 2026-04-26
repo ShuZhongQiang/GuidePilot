@@ -1,4 +1,4 @@
-﻿(function initActionCapture(global) {
+(function initActionCapture(global) {
   function buildActionDraft(input) {
     const payload = input && typeof input === 'object' ? input : {};
     const page = collectPageContext();
@@ -7,6 +7,10 @@
     const draft = {
       actionId: payload.actionId || null,
       actionType: payload.actionType || 'click',
+      inputType: payload.inputType || '',
+      hasValue: payload.hasValue === true,
+      valuePolicy: payload.valuePolicy || 'redacted',
+      valueKind: payload.valueKind || payload.inputType || '',
       page: {
         url: page.url,
         title: page.title

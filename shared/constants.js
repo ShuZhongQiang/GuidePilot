@@ -11,7 +11,10 @@
   });
 
   const ACTION_TYPE = Object.freeze({
-    CLICK: 'click'
+    CLICK: 'click',
+    INPUT: 'input',
+    SELECT: 'select',
+    SCROLL: 'scroll'
   });
 
   const ASSET_KIND = Object.freeze({
