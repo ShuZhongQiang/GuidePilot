@@ -2,7 +2,14 @@
   function buildActionDraft(input) {
     const payload = input && typeof input === 'object' ? input : {};
     const page = collectPageContext();
-    const target = buildTargetFingerprint(payload.targetElement);
+    const targetOverrides = payload.targetOverrides && typeof payload.targetOverrides === 'object'
+      ? payload.targetOverrides
+      : null;
+    const target = Object.assign(
+      {},
+      buildTargetFingerprint(payload.targetElement),
+      targetOverrides || {}
+    );
 
     const draft = {
       actionId: payload.actionId || null,

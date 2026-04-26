@@ -235,6 +235,257 @@
     };
   }
 
+  function isCustomSelectWrapper(element) {
+    if (!(element instanceof Element)) {
+      return null;
+    }
+
+    const customSelect = element.closest('.el-select, .ant-select, .v-select, [data-component-type="select"], [role="combobox"][aria-haspopup="listbox"]');
+    if (customSelect) {
+      return customSelect;
+    }
+
+    const className = typeof element.className === 'string' ? element.className : '';
+    if (className.includes('el-select__wrapper') || className.includes('el-select__selection') || className.includes('el-select__placeholder') || className.includes('el-select__selected-item') || className.includes('el-select__input')) {
+      const ancestor = element.closest('.el-select');
+      return ancestor || element;
+    }
+
+    return null;
+  }
+
+  function isCustomSelectDropdown(element) {
+    if (!(element instanceof Element)) {
+      return false;
+    }
+
+    const className = typeof element.className === 'string' ? element.className : '';
+
+    if (className.includes('el-select-dropdown') || className.includes('el-select-dropdown__item') || className.includes('el-option')) {
+      return true;
+    }
+
+    if (className.includes('ant-select-item-option') || className.includes('ant-select-item')) {
+      return true;
+    }
+
+    if (element.closest && element.closest('.el-select-dropdown, .ant-select-dropdown, [role="listbox"], .select-dropdown')) {
+      return true;
+    }
+
+    const role = element.getAttribute('role');
+    if (role === 'option' || role === 'listbox') {
+      return true;
+    }
+
+    return false;
+  }
+
+  function getCustomSelectOption(element) {
+    if (!(element instanceof Element)) {
+      return null;
+    }
+
+    const option = element.closest('.el-select-dropdown__item, .el-option, .ant-select-item-option, [role="option"]');
+    if (option) {
+      return option;
+    }
+
+    return null;
+  }
+
+  function normalizeActionText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function getElementText(element) {
+    if (!(element instanceof Element)) {
+      return '';
+    }
+    return normalizeActionText(element.textContent || element.innerText || '');
+  }
+
+  function getCustomSelectLabel(selectElement) {
+    if (!(selectElement instanceof Element)) {
+      return '';
+    }
+
+    const controlLabel = getControlLabel(selectElement);
+    if (controlLabel) {
+      return controlLabel;
+    }
+
+    const labelCandidates = [
+      '.el-form-item__label',
+      'label'
+    ];
+
+    for (const selector of labelCandidates) {
+      const labeledAncestor = selectElement.closest('.el-form-item, .form-item, .field, .form-group');
+      const labelElement = labeledAncestor && labeledAncestor.querySelector(selector);
+      const labelText = getElementText(labelElement);
+      if (labelText) {
+        return labelText.replace(/[:：]\s*$/, '');
+      }
+    }
+
+    const placeholderElement = selectElement.querySelector('.el-select__placeholder, .el-select__selected-item, [placeholder]');
+    const placeholderText = getElementText(placeholderElement)
+      || normalizeActionText(placeholderElement && placeholderElement.getAttribute('placeholder'));
+    if (placeholderText) {
+      return placeholderText;
+    }
+
+    return normalizeActionText(selectElement.getAttribute('aria-label') || selectElement.getAttribute('placeholder') || '');
+  }
+
+  function getControlLabel(element) {
+    if (!(element instanceof Element)) {
+      return '';
+    }
+
+    const ariaLabel = normalizeActionText(element.getAttribute('aria-label') || '');
+    if (ariaLabel) {
+      return ariaLabel;
+    }
+
+    const id = element.getAttribute('id');
+    if (id) {
+      const explicitLabel = document.querySelector('label[for="' + cssSelectorEscape(id) + '"]');
+      const explicitText = getElementText(explicitLabel);
+      if (explicitText) {
+        return explicitText.replace(/[:：]\s*$/, '');
+      }
+    }
+
+    const wrappedLabel = element.closest('label');
+    const wrappedText = getElementText(wrappedLabel);
+    if (wrappedText) {
+      return wrappedText.replace(getElementText(element), '').replace(/[:：]\s*$/, '').trim();
+    }
+
+    return '';
+  }
+
+  function getOpenCustomSelectForDropdown(optionElement) {
+    const dropdown = optionElement && optionElement.closest
+      ? optionElement.closest('.el-select-dropdown, .ant-select-dropdown, [role="listbox"], .select-dropdown')
+      : null;
+    const dropdownId = dropdown ? dropdown.getAttribute('id') : '';
+
+    if (dropdownId) {
+      const controlled = document.querySelector('[aria-controls="' + cssSelectorEscape(dropdownId) + '"]');
+      const controlledSelect = isCustomSelectWrapper(controlled);
+      if (controlledSelect) {
+        return controlledSelect;
+      }
+    }
+
+    const recentSelect = activeCustomSelectState && activeCustomSelectState.element && activeCustomSelectState.element.isConnected
+      ? activeCustomSelectState.element
+      : null;
+    if (recentSelect && Date.now() - activeCustomSelectState.openedAt < 30000) {
+      return recentSelect;
+    }
+
+    return document.querySelector('.el-select.is-focused, .el-select .el-select__wrapper.is-focused, .ant-select-focused, [aria-expanded="true"]');
+  }
+
+  function cssSelectorEscape(value) {
+    if (typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function') {
+      return CSS.escape(value);
+    }
+    return String(value || '').replace(/["\\]/g, '\\$&');
+  }
+
+  function isDisabledOption(element) {
+    if (!(element instanceof Element)) {
+      return false;
+    }
+
+    const className = typeof element.className === 'string' ? element.className : '';
+    return element.getAttribute('aria-disabled') === 'true'
+      || element.hasAttribute('disabled')
+      || className.includes('is-disabled')
+      || className.includes('disabled');
+  }
+
+  function stopEventForReplay(event) {
+    if (!event) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === 'function') {
+      event.stopImmediatePropagation();
+    }
+  }
+
+  async function captureCustomSelectOption(optionElement, rawTarget, event) {
+    const state = getRuntimeState();
+    if (!state.isRecording || state.isReplayingClick || !(optionElement instanceof Element)) {
+      return false;
+    }
+
+    if (isDisabledOption(optionElement)) {
+      return true;
+    }
+
+    const optionText = getElementText(optionElement)
+      || normalizeActionText(optionElement.getAttribute('label') || optionElement.getAttribute('title') || optionElement.getAttribute('aria-label'));
+    if (!optionText) {
+      return true;
+    }
+
+    let shouldReplay = false;
+    if (event) {
+      stopEventForReplay(event);
+      setRuntimeState({
+        pendingManualAction: buildPendingManualAction(rawTarget instanceof Element ? rawTarget : optionElement, optionElement, event)
+      });
+      shouldReplay = true;
+    }
+
+    const selectElement = getOpenCustomSelectForDropdown(optionElement);
+    const fieldLabel = getCustomSelectLabel(selectElement);
+    const highlightRect = highlightElement(optionElement);
+
+    if (!highlightRect) {
+      clearHighlights();
+      if (shouldReplay) {
+        replayPendingManualAction();
+      }
+      return true;
+    }
+
+    try {
+      await captureAndCommit(optionElement, highlightRect, state.mode !== 'manual', 'input', {
+        inputType: 'select',
+        hasValue: true,
+        valuePolicy: 'store',
+        valueKind: 'select',
+        targetOverrides: {
+          text: optionText,
+          placeholder: fieldLabel
+        }
+      });
+    } catch (error) {
+      clearHighlights();
+      await reportRuntimeError({
+        stage: 'captureCustomSelectOption',
+        error: error && error.message ? error.message : 'unknown_error'
+      });
+    } finally {
+      activeCustomSelectState = null;
+      if (shouldReplay) {
+        replayPendingManualAction();
+      }
+    }
+
+    return true;
+  }
+
   function isRecorderUiElement(element) {
     return Boolean(element && element.closest('[data-step-recorder-ui="true"]'));
   }
@@ -478,6 +729,9 @@
 
   const INPUT_TRACKING_KEY = '__stepRecorderInputTracking__';
   const trackedInputElements = new Set();
+  const lastClickRecord = { selector: '', timestamp: 0 };
+  let activeCustomSelectState = null;
+  const CLICK_DEDUP_WINDOW_MS = 500;
 
   function getInputTracking(element) {
     if (!element || !element[INPUT_TRACKING_KEY]) {
@@ -499,7 +753,7 @@
   }
 
   function isElementForInputTracking(element) {
-    return element && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement);
+    return element && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement);
   }
 
   function resolveInputType(element) {
@@ -599,11 +853,25 @@
       return;
     }
 
-    const tracking = getInputTracking(target);
-    if (tracking) {
-      tracking.lastValue = target.value || '';
-      tracking.lastChangeAt = Date.now();
+    const inputType = resolveInputType(target);
+    if (shouldSkipInputType(inputType)) {
+      return;
     }
+
+    let tracking = getInputTracking(target);
+    if (!tracking) {
+      tracking = {
+        element: target,
+        inputType: inputType,
+        startedAt: Date.now(),
+        lastValue: target.value || '',
+        lastChangeAt: Date.now(),
+        committed: false
+      };
+      setInputTracking(target, tracking);
+    }
+    tracking.lastValue = target.value || '';
+    tracking.lastChangeAt = Date.now();
   }
 
   async function handleInput(event) {
@@ -627,6 +895,10 @@
       return;
     }
 
+    if (target instanceof HTMLSelectElement) {
+      return;
+    }
+
     let tracking = getInputTracking(target);
     if (!tracking) {
       tracking = {
@@ -644,6 +916,54 @@
     } else {
       tracking.lastValue = target.value || '';
       tracking.lastChangeAt = Date.now();
+    }
+  }
+
+  async function handleSelectChange(event) {
+    const state = getRuntimeState();
+    if (!state.isRecording || state.isReplayingClick) {
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    if (isRecorderUiElement(target)) {
+      return;
+    }
+
+    const highlightRect = highlightElement(target);
+    if (!highlightRect) {
+      clearHighlights();
+      return;
+    }
+
+    const selectedOption = target.selectedOptions && target.selectedOptions.length > 0
+      ? target.selectedOptions[0]
+      : null;
+    const selectedText = normalizeActionText(selectedOption ? selectedOption.textContent : '');
+    const fieldLabel = getControlLabel(target)
+      || normalizeActionText(target.getAttribute('placeholder') || target.getAttribute('name') || '');
+
+    try {
+      await captureAndCommit(target, highlightRect, state.mode !== 'manual', 'input', {
+        inputType: 'select',
+        hasValue: Boolean(target.value && String(target.value).trim().length > 0),
+        valuePolicy: 'store',
+        valueKind: 'select',
+        targetOverrides: {
+          text: selectedText || getElementText(target),
+          placeholder: fieldLabel
+        }
+      });
+    } catch (error) {
+      clearHighlights();
+      reportRuntimeError({
+        stage: 'captureSelect',
+        error: error && error.message ? error.message : 'unknown_error'
+      });
     }
   }
 
@@ -698,7 +1018,72 @@
       }
     }
 
+    if (rawTarget instanceof HTMLSelectElement) {
+      return;
+    }
+
+    if (rawTarget instanceof HTMLOptionElement || rawTarget instanceof HTMLOptGroupElement) {
+      return;
+    }
+
+    if (rawTarget.parentElement && rawTarget.parentElement instanceof HTMLSelectElement) {
+      return;
+    }
+
+    const rawCustomSelectOption = getCustomSelectOption(rawTarget);
+    if (rawCustomSelectOption) {
+      await captureCustomSelectOption(rawCustomSelectOption, rawTarget, event);
+      return;
+    }
+
+    if (isCustomSelectDropdown(rawTarget)) {
+      return;
+    }
+
     const resolvedTarget = resolveClickTarget(rawTarget, event);
+
+    const resolvedCustomSelectOption = getCustomSelectOption(resolvedTarget);
+    if (resolvedCustomSelectOption) {
+      await captureCustomSelectOption(resolvedCustomSelectOption, rawTarget, event);
+      return;
+    }
+
+    if (resolvedTarget instanceof HTMLSelectElement) {
+      return;
+    }
+
+    if (resolvedTarget instanceof HTMLOptionElement || resolvedTarget instanceof HTMLOptGroupElement) {
+      return;
+    }
+
+    if (resolvedTarget.closest && resolvedTarget.closest('select')) {
+      return;
+    }
+
+    if (isCustomSelectDropdown(resolvedTarget)) {
+      return;
+    }
+
+    const customSelectWrapper = isCustomSelectWrapper(rawTarget) || isCustomSelectWrapper(resolvedTarget);
+
+    if (customSelectWrapper) {
+      activeCustomSelectState = {
+        element: customSelectWrapper,
+        label: getCustomSelectLabel(customSelectWrapper),
+        openedAt: Date.now()
+      };
+      return;
+    }
+
+    const now = Date.now();
+    const fingerprint = buildTargetFingerprint(resolvedTarget);
+    const currentSelector = fingerprint.selector || '';
+    if (currentSelector && currentSelector === lastClickRecord.selector && (now - lastClickRecord.timestamp) < CLICK_DEDUP_WINDOW_MS) {
+      return;
+    }
+    lastClickRecord.selector = currentSelector;
+    lastClickRecord.timestamp = now;
+
     const highlightRect = highlightElement(resolvedTarget);
 
     if (!highlightRect) {
@@ -771,6 +1156,7 @@
 
     document.addEventListener('click', handleClick, true);
     document.addEventListener('input', handleInput, true);
+    document.addEventListener('change', handleSelectChange, true);
   }
 
   function stopRuntime() {
@@ -795,6 +1181,7 @@
 
     document.removeEventListener('click', handleClick, true);
     document.removeEventListener('input', handleInput, true);
+    document.removeEventListener('change', handleSelectChange, true);
     document.removeEventListener('blur', handleInputFieldBlur, true);
     document.removeEventListener('change', handleInputFieldChange, true);
     clearHighlights();

@@ -7,35 +7,56 @@ function escapeDocumentText(value) {
     .replaceAll("'", '&#39;');
 }
 
+function normalizeTargetText(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const lowerText = text.toLowerCase();
+  const commonLabels = {
+    'increase number': '增加数值',
+    'decrease number': '减少数值',
+    'clear': '清空',
+    'close': '关闭'
+  };
+
+  return commonLabels[lowerText] || text;
+}
+
 function buildStepInstruction(stepPayload) {
-  const targetText = stepPayload.targetText || '目标元素';
+  const targetText = normalizeTargetText(stepPayload.targetText) || '目标元素';
   const actionType = stepPayload.actionType || 'click';
-  const placeholder = cleanPlaceholder(stepPayload.placeholder) || targetText;
+  const placeholder = cleanPlaceholder(stepPayload.placeholder);
   const inputType = stepPayload.inputType || '';
   const hasValue = stepPayload.hasValue;
   const valuePolicy = stepPayload.valuePolicy || 'redacted';
 
   if (actionType === 'click') {
     if (inputType === 'password') {
-      return '点击"' + placeholder + '"激活密码输入';
+      return '点击"' + (placeholder || targetText) + '"激活密码输入';
     }
     return '点击"' + targetText + '"';
   }
 
   if (actionType === 'input') {
+    const fieldName = placeholder || '';
+    const valueText = cleanPlaceholder(targetText) || targetText;
     if (inputType === 'password') {
       return '在密码输入框中输入你的登录密码（内容将以***隐藏显示）';
     }
     if (inputType === 'email') {
-      return '在"' + placeholder + '"中输入邮箱地址';
+      return '在"' + (fieldName || valueText) + '"中输入邮箱地址';
     }
     if (inputType === 'text') {
-      if (hasValue) {
-        return '在"' + placeholder + '"中输入内容';
-      }
-      return '在"' + placeholder + '"中输入内容';
+      return '在"' + (fieldName || valueText) + '"中输入内容';
     }
-    return '在"' + placeholder + '"中输入内容';
+    if (inputType === 'select') {
+      if (fieldName && valueText && fieldName !== valueText) {
+        return '在"' + fieldName + '"中选择"' + valueText + '"';
+      }
+      if (valueText) {
+        return '选择"' + valueText + '"';
+      }
+      return '选择一个选项';
+    }
+    return '在"' + (fieldName || valueText || '输入框') + '"中输入内容';
   }
 
   if (actionType === 'scroll') {
@@ -46,7 +67,7 @@ function buildStepInstruction(stepPayload) {
 }
 
 function buildStepTitle(stepPayload) {
-  const targetText = stepPayload.targetText;
+  const targetText = normalizeTargetText(stepPayload.targetText);
   const actionType = stepPayload.actionType || 'click';
   const pageTitle = stepPayload.pageTitle || '';
   const inputType = stepPayload.inputType || '';
@@ -67,6 +88,13 @@ function buildStepTitle(stepPayload) {
     }
     if (inputType === 'email') {
       return '输入邮箱地址到"' + description + '"';
+    }
+    if (inputType === 'select') {
+      const optionText = cleanPlaceholder(targetText) || targetText;
+      if (placeholder && optionText && placeholder !== optionText) {
+        return '在"' + placeholder + '"中选择"' + optionText + '"';
+      }
+      return '选择"' + (optionText || description) + '"';
     }
     if (inputType === 'text') {
       return '输入"' + description + '"';
@@ -120,7 +148,9 @@ function cleanPlaceholder(value) {
   var patterns = [
     /^请输入\s*/i,
     /^请填写\s*/i,
+    /^请选择\s*/i,
     /^输入\s*/i,
+    /^选择\s*/i,
     /^enter\s*/i,
     /^please\s+enter\s*/i,
     /^please\s+input\s*/i
@@ -278,7 +308,7 @@ async function buildCanonicalDocument(sessionId) {
   const canonicalSteps = steps.map(function(step, index) {
     const seq = typeof step.seq === 'number' ? step.seq : index + 1;
     const targetText = step.target && step.target.text
-      ? step.target.text
+      ? normalizeTargetText(step.target.text)
       : '目标元素';
     const selector = step.target && step.target.selector ? step.target.selector : '';
     const pageUrl = step.page && step.page.url ? step.page.url : '';
