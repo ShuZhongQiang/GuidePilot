@@ -608,8 +608,9 @@ async function showImagePreviewOnActivePage(step) {
     throw new Error('active_tab_not_found');
   }
 
-  const target = step.target || {};
-  const title = target.text || target.ariaLabel || target.placeholder || target.dataTestId || '点击元素';
+  const title = typeof window.generateStepDisplayText === 'function'
+    ? window.generateStepDisplayText(step)
+    : (step.target && (step.target.text || step.target.ariaLabel || step.target.placeholder || step.target.dataTestId) || '点击元素');
 
   const result = await new Promise(function resolveSend(resolve, reject) {
     chrome.tabs.sendMessage(

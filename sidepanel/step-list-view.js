@@ -16,6 +16,89 @@
       .replaceAll("'", '&#39;');
   }
 
+  function normalizeTargetText(value) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    const lowerText = text.toLowerCase();
+    const commonLabels = {
+      'increase number': '增加数值',
+      'decrease number': '减少数值',
+      'clear': '清空',
+      'close': '关闭'
+    };
+    return commonLabels[lowerText] || text;
+  }
+
+  function cleanPlaceholder(value) {
+    if (!value) {
+      return '';
+    }
+    var text = String(value).trim();
+    if (!text) {
+      return '';
+    }
+    var patterns = [
+      /^请输入\s*/i,
+      /^请填写\s*/i,
+      /^请选择\s*/i,
+      /^输入\s*/i,
+      /^选择\s*/i,
+      /^enter\s*/i,
+      /^please\s+enter\s*/i,
+      /^please\s+input\s*/i
+    ];
+    for (var i = 0; i < patterns.length; i++) {
+      text = text.replace(patterns[i], '');
+    }
+    return text.trim();
+  }
+
+  function generateStepDisplayText(step) {
+    const target = step.target || {};
+    const actionType = step.actionType || 'click';
+    const inputType = step.inputType || '';
+    const hasValue = step.hasValue === true;
+
+    const rawText = target.text || target.ariaLabel || '';
+    const placeholder = target.placeholder || '';
+    const targetText = normalizeTargetText(rawText) || '目标元素';
+    const cleanedPlaceholder = cleanPlaceholder(placeholder);
+    const cleanedTargetText = cleanPlaceholder(targetText);
+
+    if (actionType === 'click') {
+      if (inputType === 'password') {
+        return '点击"' + (cleanedPlaceholder || targetText) + '"激活密码输入';
+      }
+      return '点击"' + targetText + '"';
+    }
+
+    if (actionType === 'input') {
+      const fieldName = cleanedPlaceholder || cleanedTargetText;
+      if (inputType === 'password') {
+        return '输入密码到"' + fieldName + '"';
+      }
+      if (inputType === 'email') {
+        return '在"' + fieldName + '"中输入邮箱';
+      }
+      if (inputType === 'select') {
+        if (cleanedPlaceholder && cleanedTargetText && cleanedPlaceholder !== cleanedTargetText) {
+          return '在"' + cleanedPlaceholder + '"中选择"' + cleanedTargetText + '"';
+        }
+        return '选择"' + (cleanedTargetText || fieldName) + '"';
+      }
+      return '在"' + (fieldName || '输入框') + '"中输入';
+    }
+
+    if (actionType === 'select') {
+      return '选择"' + (cleanedPlaceholder || targetText) + '"';
+    }
+
+    if (actionType === 'scroll') {
+      return '滚动页面查看内容';
+    }
+
+    return '操作"' + targetText + '"';
+  }
+
   function statusLabel(status) {
     if (status === 'pending') {
       return '处理中';
@@ -66,7 +149,7 @@
       const status = step.status || 'ready';
       const target = step.target || {};
       const page = step.page || {};
-      const text = target.text || target.ariaLabel || target.placeholder || target.dataTestId || '点击元素';
+      const text = generateStepDisplayText(step);
       const selector = target.selector || (Array.isArray(target.fallbackSelectors) ? target.fallbackSelectors[0] : '') || '';
 
       stepElement.className = 'step-item step-status step-status--' + status;
@@ -132,4 +215,5 @@
   }
 
   global.renderSteps = renderSteps;
+  global.generateStepDisplayText = generateStepDisplayText;
 })(typeof self !== 'undefined' ? self : window);
