@@ -477,6 +477,7 @@
   }
 
   const INPUT_TRACKING_KEY = '__stepRecorderInputTracking__';
+  const trackedInputElements = new Set();
 
   function getInputTracking(element) {
     if (!element || !element[INPUT_TRACKING_KEY]) {
@@ -487,11 +488,13 @@
 
   function setInputTracking(element, tracking) {
     element[INPUT_TRACKING_KEY] = tracking;
+    trackedInputElements.add(element);
   }
 
   function clearInputTracking(element) {
     if (element && element[INPUT_TRACKING_KEY]) {
       delete element[INPUT_TRACKING_KEY];
+      trackedInputElements.delete(element);
     }
   }
 
@@ -771,22 +774,17 @@
   }
 
   function stopRuntime() {
-    const state = getRuntimeState();
-
-    if (state.sessionId) {
-      var allTracked = document.querySelectorAll('input[' + INPUT_TRACKING_KEY + '], textarea[' + INPUT_TRACKING_KEY + ']');
-      for (var i = 0; i < allTracked.length; i++) {
-        var el = allTracked[i];
-        var tracking = getInputTracking(el);
-        if (tracking && !tracking.committed && el.value && String(el.value).trim().length > 0) {
-          try {
-            flushInputField(el, true);
-          } catch (e) {
-            clearInputTracking(el);
-          }
+    var snapshot = new Set(trackedInputElements);
+    snapshot.forEach(function(el) {
+      var tracking = getInputTracking(el);
+      if (tracking && !tracking.committed && el.value && String(el.value).trim().length > 0) {
+        try {
+          flushInputField(el, true);
+        } catch (e) {
+          clearInputTracking(el);
         }
       }
-    }
+    });
 
     setRuntimeState({
       isRecording: false,
