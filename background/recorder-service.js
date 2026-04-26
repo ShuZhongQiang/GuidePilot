@@ -195,7 +195,15 @@ async function commitCapturedStepFlow(payload, senderContext, context) {
   };
 }
 
-function applyAiRewriteToDocument(documentPayload, aiResult) {
+function generateFallbackTitleFromSteps(steps) {
+  if (!steps || steps.length === 0) {
+    return '';
+  }
+  var firstPageTitle = steps[0].pageTitle || '';
+  return firstPageTitle ? firstPageTitle + ' - 操作手册' : '操作手册';
+}
+
+function applyAiRewriteToDocument(documentPayload, aiResult, userPrompt) {
   if (!aiResult || !aiResult.output) {
     return documentPayload;
   }
@@ -231,9 +239,18 @@ function applyAiRewriteToDocument(documentPayload, aiResult) {
     };
   });
 
+  var aiTitle = aiResult.output.title || documentPayload.title || '步骤指南';
+  var titleCheck = typeof validateTitle === 'function'
+    ? validateTitle(aiTitle, userPrompt || '')
+    : { valid: true };
+  if (!titleCheck.valid) {
+    var fallbackTitle = generateFallbackTitleFromSteps(documentPayload.steps);
+    aiTitle = fallbackTitle || documentPayload.title || '步骤指南';
+  }
+
   const nextDocument = {
     session: documentPayload.session,
-    title: aiResult.output.title || documentPayload.title || '步骤指南',
+    title: aiTitle,
     summary: aiResult.output.summary || '',
     sections: aiSections,
     steps: (documentPayload.steps || []).map(function mapStep(step) {
@@ -301,7 +318,7 @@ async function buildDocumentResult(payload) {
       prompt: prompt,
       scenario: canonicalDocument.scenario || ''
     }, settings.ai || {});
-    finalDocument = applyAiRewriteToDocument(canonicalDocument, aiResult);
+    finalDocument = applyAiRewriteToDocument(canonicalDocument, aiResult, prompt);
   }
 
   const assets = [];

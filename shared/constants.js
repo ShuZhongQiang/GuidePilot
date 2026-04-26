@@ -69,6 +69,34 @@
     language: 'zh-CN'
   });
 
+  const TITLE_VALIDATION = Object.freeze({
+    MAX_LENGTH: 25,
+    BAD_PREFIXES: [
+      /^这是/i,
+      /^这是一份/i,
+      /^这是一个/i,
+      /^这是一本/i,
+      /^请/i,
+      /^请帮我/i,
+      /^我想/i,
+      /^生成/i,
+      /^帮我/i
+    ]
+  });
+
+  const TITLE_CLEAN_PATTERNS = Object.freeze([
+    /^这是(一份|一个|一本)?/i,
+    /^请(帮我)?/i,
+    /^帮我/i,
+    /^我想/i,
+    /[。.!！?？]+$/g
+  ]);
+
+  const EXPORT_TOKEN_CLEAN_PATTERNS = Object.freeze([
+    [/后台管理系统|管理系统|管理后台/g, '后台'],
+    [/操作手册|操作指南|手册|指南|文档|说明|教程/g, '']
+  ]);
+
   global.StepRecorderConstants = Object.freeze({
     SCHEMA_VERSION: 2,
     STEP_STATUS: STEP_STATUS,
@@ -78,6 +106,9 @@
     PREVIEW_STATUS: PREVIEW_STATUS,
     COMMIT_STATUS: COMMIT_STATUS,
     STORAGE_KEYS: STORAGE_KEYS,
-    DEFAULT_AI_SETTINGS: DEFAULT_AI_SETTINGS
+    DEFAULT_AI_SETTINGS: DEFAULT_AI_SETTINGS,
+    TITLE_VALIDATION: TITLE_VALIDATION,
+    TITLE_CLEAN_PATTERNS: TITLE_CLEAN_PATTERNS,
+    EXPORT_TOKEN_CLEAN_PATTERNS: EXPORT_TOKEN_CLEAN_PATTERNS
   });
 })(typeof self !== 'undefined' ? self : window);

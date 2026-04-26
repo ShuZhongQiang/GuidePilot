@@ -37,15 +37,112 @@
       + pad(now.getHours())
       + pad(now.getMinutes());
 
-    var baseName = 'step-guide';
-    if (documentPayload && documentPayload.title) {
-      var sanitized = sanitizeFilename(documentPayload.title);
-      if (sanitized.length > 3) {
-        baseName = sanitized;
-      }
+    var exportName = createShortExportName(documentPayload || {});
+
+    return sanitizeFilename(exportName) + '-' + timestamp;
+  }
+
+  function createShortExportName(documentPayload) {
+    if (documentPayload.exportName) {
+      return documentPayload.exportName;
     }
 
-    return baseName + '-' + timestamp;
+    const title = documentPayload.title || '';
+    const summary = documentPayload.summary || '';
+    const semanticTokens = extractSemanticExportTokens(title + ' ' + summary);
+
+    if (semanticTokens.length > 0) {
+      return semanticTokens.join('-');
+    }
+
+    const keywords = extractExportKeywords(title);
+    if (keywords.length > 0) {
+      return keywords.join('-');
+    }
+
+    return 'step-guide';
+  }
+
+  function extractSemanticExportTokens(text) {
+    const source = String(text || '').trim();
+    if (!source) {
+      return [];
+    }
+
+    const tokens = [];
+    const quotedNames = source.match(/[“"]([^”"]{2,24})[”"]/g) || [];
+    if (quotedNames.length > 0) {
+      tokens.push(typeof normalizeExportToken === 'function'
+        ? normalizeExportToken(quotedNames[0].replace(/[“”"]/g, ''))
+        : quotedNames[0].replace(/[“”"]/g, ''));
+    }
+
+    const systemMatch = source.match(/([\u4e00-\u9fa5A-Za-z0-9_-]{2,24}(?:后台管理系统|管理系统|管理后台|后台|系统|平台))/i);
+    if (systemMatch && systemMatch[1]) {
+      tokens.push(typeof normalizeExportToken === 'function'
+        ? normalizeExportToken(systemMatch[1])
+        : systemMatch[1]);
+    }
+
+    const moduleMatch = source.match(/([\u4e00-\u9fa5A-Za-z0-9_-]{2,16})模块/i);
+    if (moduleMatch && moduleMatch[1]) {
+      tokens.push(typeof normalizeExportToken === 'function'
+        ? normalizeExportToken(moduleMatch[1])
+        : moduleMatch[1]);
+    }
+
+    const actionMatch = source.match(/(新增|添加|创建|登录|编辑|修改|更新|删除|搜索|查询|导出|导入|审批|发布|配置|设置)/i);
+    if (actionMatch && actionMatch[1]) {
+      tokens.push(typeof normalizeExportToken === 'function'
+        ? normalizeExportToken(actionMatch[1])
+        : actionMatch[1]);
+    }
+
+    return Array.from(new Set(tokens.filter(Boolean))).slice(0, 4);
+  }
+
+  function extractExportKeywords(title) {
+    if (!title) {
+      return [];
+    }
+
+    var text = String(title).trim();
+    if (!text) {
+      return [];
+    }
+
+    const separators = [/[-——–\s]+/];
+    var parts = [text];
+    for (var i = 0; i < separators.length; i++) {
+      var newParts = [];
+      for (var j = 0; j < parts.length; j++) {
+        newParts = newParts.concat(parts[j].split(separators[i]));
+      }
+      parts = newParts;
+    }
+
+    var keywords = parts
+      .map(function trimPart(p) { return p.trim(); })
+      .filter(function nonEmpty(p) { return p.length > 0; });
+
+    var badWords = [
+      '这是', '这是一份', '这是一个', '这是一本',
+      '请', '请帮我', '我想', '生成', '帮我',
+      '操作', '操作手册', '操作指南', '手册', '指南',
+      '文档', '说明', '教程', 'login', '登录'
+    ];
+
+    keywords = keywords.filter(function notBadWord(k) {
+      var lower = k.toLowerCase();
+      for (var i = 0; i < badWords.length; i++) {
+        if (lower === badWords[i].toLowerCase()) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    return keywords.slice(0, 3);
   }
 
   function triggerBlobDownload(blob, filename) {

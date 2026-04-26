@@ -36,16 +36,151 @@ function getAiRequestTimeoutMs(aiSettings) {
   return 75000;
 }
 
+function validateTitle(title, userPrompt) {
+  if (!title || !title.trim()) {
+    return { valid: false, reason: 'empty_title' };
+  }
+
+  const text = title.trim();
+  const constants = self.StepRecorderConstants || {};
+  const titleValidation = constants.TITLE_VALIDATION || {};
+  const maxLength = titleValidation.MAX_LENGTH || 25;
+  const badPrefixes = titleValidation.BAD_PREFIXES || [
+    /^这是/i,
+    /^这是一份/i,
+    /^这是一个/i,
+    /^这是一本/i,
+    /^请/i,
+    /^请帮我/i,
+    /^我想/i,
+    /^生成/i,
+    /^帮我/i
+  ];
+
+  if (text.length > maxLength) {
+    return { valid: false, reason: 'too_long' };
+  }
+
+  for (var i = 0; i < badPrefixes.length; i++) {
+    if (badPrefixes[i].test(text)) {
+      return { valid: false, reason: 'bad_prefix' };
+    }
+  }
+
+  if (userPrompt && text === userPrompt.trim()) {
+    return { valid: false, reason: 'equals_prompt' };
+  }
+
+  return { valid: true };
+}
+
 function buildFallbackAiRewrite(input) {
   const schemas = self.StepRecorderSchemas || {};
   const steps = Array.isArray(input && input.steps) ? input.steps : [];
   const userPrompt = input && input.prompt ? String(input.prompt).trim() : '';
   const scenario = input && input.scenario ? String(input.scenario) : '';
 
+  function extractKeywordsFromPrompt(prompt) {
+    if (!prompt) {
+      return { system: '', module: '', action: '' };
+    }
+
+    var text = cleanIntentText(prompt.trim());
+
+    const quotedSystem = text.match(/[“"]([^”"]*(?:后台管理系统|管理系统|后台|系统|平台)[^”"]*)[”"]/i);
+
+    var systemName = quotedSystem && quotedSystem[1] ? quotedSystem[1].trim() : '';
+
+    if (!systemName) {
+      var systemMatch = text.match(/([\u4e00-\u9fa5A-Za-z0-9_-]{2,30}(?:后台管理系统|管理系统|管理后台|后台|系统|平台))/i);
+      if (systemMatch && systemMatch[1]) {
+        systemName = systemMatch[1].trim();
+      }
+    }
+
+    systemName = systemName
+      .replace(/^的/, '')
+      .replace(/[“”"']/g, '')
+      .trim();
+
+    var moduleName = '';
+    var moduleMatch = text.match(/([\u4e00-\u9fa5A-Za-z0-9_-]{2,20})模块/i);
+    if (moduleMatch && moduleMatch[1]) {
+      moduleName = moduleMatch[1].replace(/^的/, '').trim();
+    }
+
+    var actionName = '';
+    if (/新增|添加|创建/.test(text)) {
+      if (/商品/.test(text)) {
+        actionName = '商品新增';
+      } else if (/用户/.test(text)) {
+        actionName = '用户新增';
+      } else if (/订单/.test(text)) {
+        actionName = '订单新增';
+      } else {
+        actionName = '新增';
+      }
+    } else if (/登录/.test(text)) {
+      actionName = '登录';
+    } else if (/搜索|查询/.test(text)) {
+      actionName = /商品/.test(text) ? '商品查询' : '查询';
+    } else if (/编辑|修改|更新/.test(text)) {
+      actionName = /商品/.test(text) ? '商品编辑' : '编辑';
+    } else if (/删除/.test(text)) {
+      actionName = /商品/.test(text) ? '商品删除' : '删除';
+    } else {
+      var actionMatch = text.match(/(注册|设置|配置|申请|审批|发布)/i);
+      actionName = actionMatch && actionMatch[1] ? actionMatch[1] : '';
+    }
+
+    const docTypeMatch = text.match(/(手册|指南|文档|说明|教程)/i);
+    var docType = docTypeMatch
+      ? (docTypeMatch[1] === '手册' ? '操作手册' : docTypeMatch[1])
+      : '操作手册';
+
+    return {
+      system: systemName,
+      module: moduleName,
+      action: actionName,
+      docType: docType
+    };
+  }
+
+  function buildTitleFromKeywords(keywords) {
+    var parts = [];
+
+    if (keywords.system) {
+      parts.push(keywords.system);
+    }
+
+    if (keywords.module && keywords.action && keywords.action.indexOf(keywords.module.replace(/管理$/, '')) < 0) {
+      parts.push(keywords.module.replace(/管理$/, ''));
+    }
+
+    if (keywords.action) {
+      parts.push(keywords.action);
+    }
+
+    var title = parts.length > 0
+      ? parts.join('') + keywords.docType
+      : keywords.docType;
+
+    if (title.length > 25) {
+      title = title.slice(0, 25);
+    }
+
+    return title;
+  }
+
   function generateFallbackTitle() {
     if (userPrompt) {
-      return userPrompt;
+      var keywordTitle = buildTitleFromKeywords(extractKeywordsFromPrompt(userPrompt));
+      var keywordTitleCheck = validateTitle(keywordTitle, userPrompt);
+      if (keywordTitleCheck.valid) {
+        return keywordTitle;
+      }
     }
+
     if (scenario === 'login') {
       var pageName = '';
       if (steps.length > 0) {
@@ -53,6 +188,7 @@ function buildFallbackAiRewrite(input) {
       }
       return pageName ? pageName + ' - 登录操作手册' : '登录操作手册';
     }
+
     var firstPageTitle = steps.length > 0 ? (steps[0].pageTitle || '') : '';
     return firstPageTitle ? firstPageTitle + ' - 操作手册' : '操作手册';
   }
@@ -195,7 +331,7 @@ function buildAiMessages(input) {
     session: input.session,
     steps: input.steps,
     language: input.language,
-    userPrompt: input.prompt || '',
+    documentIntent: input.prompt || '',
     scenario: input.scenario || ''
   };
 
@@ -209,6 +345,10 @@ function buildAiMessages(input) {
         '1. 标题规范：',
         '   - 不要使用"点击"作为标题开头，应使用动作意图（如"输入用户名"而非"点击用户名输入框"）',
         '   - 标题应反映用户目标，而非底层交互方式',
+        '   - 标题不超过 25 个中文字符',
+        '   - 标题不以"这是/这是一份/请帮我/生成"等词开头',
+        '   - 标题不包含完整句号',
+        '   - 优先格式：系统名 + 模块名 + 操作名 + 手册/指南',
         '2. 指令规范：',
         '   - 使用"在...中输入..."描述输入操作',
         '   - 使用"点击...按钮"描述点击操作',
@@ -216,15 +356,14 @@ function buildAiMessages(input) {
         '3. 场景识别：',
         '   - 如果 scenario 字段为 "login"，这是一个登录场景',
         '   - 如果步骤包含用户名+密码+登录按钮，即使没有 scenario 也识别为登录场景',
-        '   - 优先按 userPrompt 的要求组织内容',
+        '   - 优先按 documentIntent 的要求组织内容',
         '4. 摘要规范：',
         '   - 简要说明本指南的目标场景',
-        '   - 如有 userPrompt，将其融入摘要',
+        '   - 如有 documentIntent，将其融入摘要',
         '   - 可补充必要的注意事项或前置条件',
-        '5. 标题生成：',
-        '   - 如果有 userPrompt，直接使用 userPrompt 作为文档标题',
-        '   - 如果 scenario 为 login，标题应为 "XXX - 登录操作手册"',
-        '   - 不要使用 "AI 增强步骤指南" 这种泛化标题',
+        '5. 文档意图（documentIntent）：',
+        '   - documentIntent 仅用于理解文档场景、目标用户和语气，不可直接作为标题',
+        '   - 标题必须是简洁名词短语，不得原样复制 documentIntent',
         '',
         '【字段说明】',
         '每个步骤包含：actionType(click/input/select/scroll)、inputType(text/password/email等)、placeholder、targetText、pageTitle',
@@ -306,9 +445,15 @@ async function requestOpenAiCompatibleRewrite(input, aiSettings) {
 
   const schemas = self.StepRecorderSchemas || {};
   const parsed = JSON.parse(sanitizeJsonString(content));
-  const output = typeof schemas.createAiRewriteResult === 'function'
+  let output = typeof schemas.createAiRewriteResult === 'function'
     ? schemas.createAiRewriteResult(parsed)
     : parsed;
+
+  var titleCheck = validateTitle(output.title, input.prompt);
+  if (!titleCheck.valid) {
+    var fallback = buildFallbackAiRewrite(input);
+    output.title = fallback.output.title;
+  }
 
   return {
     ok: true,

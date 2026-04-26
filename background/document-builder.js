@@ -7,6 +7,62 @@ function escapeDocumentText(value) {
     .replaceAll("'", '&#39;');
 }
 
+function cleanIntentText(value) {
+  if (!value) {
+    return '';
+  }
+  var text = String(value).trim();
+  if (!text) {
+    return '';
+  }
+  var constants = self.StepRecorderConstants || {};
+  var patterns = constants.TITLE_CLEAN_PATTERNS || [
+    /^这是(一份|一个|一本)?/i,
+    /^请(帮我)?/i,
+    /^帮我/i,
+    /^我想/i,
+    /[。.!！?？]+$/g
+  ];
+  for (var i = 0; i < patterns.length; i++) {
+    text = text.replace(patterns[i], '');
+  }
+  return text.trim();
+}
+
+function normalizeExportToken(value) {
+  if (!value) {
+    return '';
+  }
+  var text = String(value).trim();
+  if (!text) {
+    return '';
+  }
+  var constants = self.StepRecorderConstants || {};
+  var tokenPatterns = constants.EXPORT_TOKEN_CLEAN_PATTERNS || [
+    [/后台管理系统|管理系统|管理后台/g, '后台'],
+    [/操作手册|操作指南|手册|指南|文档|说明|教程/g, '']
+  ];
+  var intentPatterns = constants.TITLE_CLEAN_PATTERNS || [
+    /^这是(一份|一个|一本)?/i,
+    /^请(帮我)?/i,
+    /^帮我/i,
+    /^我想/i,
+    /[。.!！?？]+$/g
+  ];
+  for (var i = 0; i < tokenPatterns.length; i++) {
+    text = text.replace(tokenPatterns[i][0], tokenPatterns[i][1]);
+  }
+  for (var j = 0; j < intentPatterns.length; j++) {
+    text = text.replace(intentPatterns[j], '');
+  }
+  return text
+    .replace(/[^\u4e00-\u9fa5A-Za-z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 24)
+    .toLowerCase();
+}
+
 function normalizeTargetText(value) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
   const lowerText = text.toLowerCase();
