@@ -4,7 +4,7 @@
 
 GuidePilot 是一个基于 Chrome 浏览器的扩展插件，用于记录用户在网页上的操作步骤。它通过智能截图和记录用户点击事件，自动生成专业的步骤指南文档。
 
-![GuidePilot](docs/guidepilot.gif)
+![GuidePilot](docs/img/guidepilot.gif)
 
 
 ## 功能特性
